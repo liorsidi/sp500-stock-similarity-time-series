@@ -8,6 +8,7 @@ import pickle
 
 from sklearn.base import RegressorMixin
 from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 
@@ -21,7 +22,7 @@ TARGET = 'Close'
 FEATURES = ['Close']
 
 def get_data(data_period):
-    file_path = os.path.join(home_path, 'sandp500\\all_stocks_' + data_period + '.csv')
+    file_path = os.path.join(home_path, 'sandp500','all_stocks_' + data_period + '.csv')
     all_stocks = pd.read_csv(file_path)
     all_stocks[TIME] = pd.to_datetime(all_stocks[TIME])
     all_stocks = all_stocks.dropna(axis=0)
@@ -54,8 +55,6 @@ def get_similarity(df_stocks, stock_to_compare, stock_names, similarity_func, ex
                           df_stocks[df_stocks[ENTITY] == stock_name][TARGET].tolist())
                 for stock_name in stock_names
                 ]
-        if not os.path.exists(os.path.dirname(similarities_path)):
-            os.makedirs(similarities_path)
         with open(similarities_path, 'wb') as f:
             pickle.dump(similarities, f)
     with open(similarities_path, 'rb') as f:
@@ -68,7 +67,7 @@ def get_top_k(stock_names, similarities, k):
     idx = np.argpartition(s, k)
     names_top_k = np.array(stock_names)[idx[:k]]
 
-    return names_top_k
+    return names_top_k.tolist()
 
 
 ##################  Data preparation for Time Series #################
@@ -78,10 +77,11 @@ def prepare_stock_windows(X, stock_name, window, slide, next_t):
     y_column_names = [TIME] + next_t
     X_stocks_windows = []
     Y_ = []
-    while i < len(stock_X[TIME]) - window - max(next_t) :
+    while i < len(stock_X[TIME]) - window - max(next_t):
         stock_X_window = stock_X[i:i + window]
         stock_X_window.insert(0, 't', range(window))
         stock_X_window_flat = stock_X_window[FEATURES + [ENTITY] + ['t']].pivot(index = ENTITY,columns = 't').iloc[0].to_dict()
+        stock_X_window_flat[ENTITY] = stock_name
         # stock_X_windows = stock_X[i:i + window].as_matrix()
         X_stocks_windows.append(stock_X_window_flat)
         y_ti = i + window + np.asarray(next_t)
@@ -92,6 +92,7 @@ def prepare_stock_windows(X, stock_name, window, slide, next_t):
         y_ = {}
         for c in range(len(y_column_names)):
             y_[str(y_column_names[c])] =  y_vals[c]
+        y_[ENTITY] = stock_name
         Y_.append(y_)
         i += slide
     return pd.DataFrame(X_stocks_windows), pd.DataFrame(Y_)
@@ -105,7 +106,7 @@ def prepare_rolling_periods(df_stocks, start_period_train, end_period_train, sta
     stock_names = df_stocks[ENTITY].unique()
     #prepare windows per stock
     for stock_name in stock_names:
-        stock_train_windows_x, stock_train_windows_y = prepare_stock_windows(train_X, stock_name,window_len, slide,next_t)
+        stock_train_windows_x, stock_train_windows_y = prepare_stock_windows(train_X, stock_name, window_len, slide, next_t)
         stock_test_windows_x, stock_test_windows_y = prepare_stock_windows(test_X, stock_name, window_len, slide, next_t)
 
         train_windows_x.append(stock_train_windows_x)
@@ -117,7 +118,8 @@ def prepare_rolling_periods(df_stocks, start_period_train, end_period_train, sta
 
 
 def prepare_folds(df_stocks, stock_to_compare, window_len, slide,next_t, n_folds, experiment_path, force):
-    folds_path = os.path.join(experiment_path, stock_to_compare + "_w-" + str(window_len) + "_slide-" + str(slide) + "_f-" + str(window_len) + ".pkl")
+    folds_path = os.path.join(experiment_path, stock_to_compare + "_w-" + str(window_len) + "_slide-" +
+                              str(slide) + "_f-" + str(window_len) + ".pkl")
     if (not os.path.isfile(folds_path)) or force:
         stock_times = df_stocks[df_stocks[ENTITY] == stock_to_compare][TIME].tolist()
         period_len = abs(len(stock_times)/n_folds)
@@ -143,8 +145,6 @@ def prepare_folds(df_stocks, stock_to_compare, window_len, slide,next_t, n_folds
             folds_X_test.append(test_windows_x)
             folds_Y_test.append(test_windows_y)
 
-        if not os.path.exists(os.path.dirname(folds_path)):
-            os.makedirs(folds_path)
         with open(folds_path, 'wb') as f:
             pickle.dump([folds_X_train, folds_Y_train, folds_X_test, folds_Y_test], f)
     with open(folds_path, 'rb') as f:
@@ -161,73 +161,150 @@ def statistical_targeting(curr_price, future_price, range = 1, avg = None, std =
     target = [np.sign(diff_price) if abs(diff_price) > (avg + range*std) else 0 for diff_price in diff_prices]
     return target, {'range' : 1, 'avg' : None, 'std' : None}
 
+def normalize_folds(data):
 
 ################# Evaluation methods ################################
-def simple_profit_evaluation(curr_price, predicted_price):
+def simple_profit_evaluation(curr_price, predicted_price, isregressor):
     in_position = False
     profit = 0
     last_buy = 0
-    for i in range(len(curr_price)):
-        if curr_price[i] < predicted_price[i] and not in_position:
-            in_position = True
-            last_buy = curr_price[i]
-        if curr_price[i] > predicted_price[i] and in_position:
-            in_position = False
-            profit = profit + (curr_price[i]-last_buy)
+    if isregressor:
+        for i in range(len(curr_price)):
+            if curr_price[i] < predicted_price[i] and not in_position:
+                in_position = True
+                last_buy = curr_price[i]
+            if curr_price[i] > predicted_price[i] and in_position:
+                in_position = False
+                profit = profit + (curr_price[i]-last_buy)
+    else:
+        for i in range(len(curr_price)):
+            if predicted_price[i] > 0 and not in_position:
+                in_position = True
+                last_buy = curr_price[i]
+            if predicted_price[i] < 0 and in_position:
+                in_position = False
+                profit = profit + (curr_price[i] - last_buy)
     return profit
 
 
-def long_short_profit_evaluation(curr_price, predicted_price):
+def long_short_profit_evaluation(curr_price, predicted_price, isregressor):
     is_long = None
     profit = 0
     last_buy = 0
 
-    for i in range(len(curr_price)):
-        #go long
-        if curr_price[i] < predicted_price[i]:
-            # if short position - close it and go long
-            if not is_long:
-                profit += last_buy - curr_price[i]
-                last_buy = curr_price[i]
-                is_long = True
-            #first time
-            elif is_long is None:
-                last_buy = curr_price[i]
-                is_long = True
-
-        #go short
-        if curr_price[i] > predicted_price[i]:
-            # if long position - close it and go short
-            if is_long:
-                profit += curr_price[i] - last_buy
-                last_buy = curr_price[i]
-                is_long = False
-            # first time
-            elif is_long is None:
-                last_buy = curr_price[i]
-                is_long = False
+    if isregressor:
+        for i in range(len(curr_price)):
+            #go long
+            if curr_price[i] < predicted_price[i]:
+                # if short position - close it and go long
+                if not is_long:
+                    profit += last_buy - curr_price[i]
+                    last_buy = curr_price[i]
+                    is_long = True
+                #first time
+                elif is_long is None:
+                    last_buy = curr_price[i]
+                    is_long = True
+            #go short
+            if curr_price[i] > predicted_price[i]:
+                # if long position - close it and go short
+                if is_long:
+                    profit += curr_price[i] - last_buy
+                    last_buy = curr_price[i]
+                    is_long = False
+                # first time
+                elif is_long is None:
+                    last_buy = curr_price[i]
+                    is_long = False
+    else:
+        for i in range(len(curr_price)):
+            #go long
+            if predicted_price[i] > 0:
+                # if short position - close it and go long
+                if not is_long:
+                    profit += last_buy - curr_price[i]
+                    last_buy = curr_price[i]
+                    is_long = True
+                #first time
+                elif is_long is None:
+                    last_buy = curr_price[i]
+                    is_long = True
+            #go short
+            if  predicted_price[i]<0:
+                # if long position - close it and go short
+                if is_long:
+                    profit += curr_price[i] - last_buy
+                    last_buy = curr_price[i]
+                    is_long = False
+                # first time
+                elif is_long is None:
+                    last_buy = curr_price[i]
+                    is_long = False
     return profit
 
 
 ################# Experiments Executions ############################
+def min_max_norm(x, min_x=None, max_x=None):
+    if min_x is None:
+        min_x = min(x)
+        max_x = max(x)
+    return (x - min_x) / (max_x - min_x) , {'max_x' : max_x, 'min_x' : min_x }
+
+
+def normalize_per_stock(X, stock_args = None):
+    stocks = X[ENTITY].unique()
+
+    if stock_args is None:
+        stock_args = {}
+        for stock in stocks:
+            X_s = X[X[ENTITY] == stock]
+            stock_args[stock] = {}
+            stock_args[stock]['min'] = X_s.min()
+            stock_args[stock]['max'] = X_s.max()
+
+    for stock in stocks:
+        X_s = X[X[ENTITY] == stock]
+        X_s_min = stock_args[stock]['min']
+        X_s_max = stock_args[stock]['max']
+        X_s_n = (X_s - X_s_min) / (X_s_max - X_s_min)
+
+        y_test_norm, _ = min_max_norm(y_test, norm_args)
+
+        X_train_norm, norm_args = min_max_norm(X_train)
+        X_test_norm, _ = min_max_norm(X_test, norm_args)
+
+    del X[ENTITY]
+
 def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, model_class,model_args, evaluation_methods, profit_methods, to_classification):
     future_ys = folds_Y_train[0].columns.tolist()
     future_ys.remove(TIME)
     evaluations = []
+
+
     for f in range(len(folds_X_train)):
         X_train = folds_X_train[f]
         X_test = folds_X_test[f]
 
         X_test_curr_price = X_test[(TARGET, window_len - 1)].tolist()
         X_train_curr_price = X_train[(TARGET, window_len - 1)].tolist()
+
+        X_train_norm, X_norm_args = normalize_per_stock(X_train)
+        X_test_norm, _ = normalize_per_stock(X_test,X_norm_args)
+
+        y_train_norm, y_norm_args = normalize_per_stock(y_train)
+        y_test_norm, _ = normalize_per_stock(y_test, y_norm_args)
+
+
+
         for t in future_ys:
             y_train = folds_Y_train[f][t].values
             y_test = folds_Y_test[f][t].values
-            if not isinstance(model_class, RegressorMixin):
+
+            model = model_class(**model_args)
+            if not isinstance(model, RegressorMixin):
                 y_train, apply_args = to_classification(X_train_curr_price, y_train)
                 y_test, _ = to_classification(X_test_curr_price, y_test, **apply_args)
 
-            model = model_class(**model_args)
             model.fit(X_train,y_train)
             y_preds = model.predict(X_test)
             fold_eval = {}
@@ -242,8 +319,7 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
             for profit_method in profit_methods:
                 eval_error = dict(fold_eval)
                 eval_error["method"] = profit_method.__name__
-
-                eval_error["value"] = profit_method(X_test_curr_price,y_preds)
+                eval_error["value"] = profit_method(X_test_curr_price,y_preds,isinstance(model, RegressorMixin))
                 evaluations.append(eval_error)
     return pd.DataFrame(evaluations)
 
@@ -270,24 +346,35 @@ def get_index_product(params):
 
 
 def run_experiment(data_period, stock_to_compare,similarity_func, k, select_k_func, window_len, slide, next_t, n_folds, models, models_arg,to_classification, force=False):
-    experiment_path = os.path.join(home_path, data_period)
+    experiment_path = os.path.join(home_path,'experiments', data_period)
+    if not os.path.exists(os.path.dirname(experiment_path)):
+        os.makedirs(experiment_path)
+
     df_stocks = get_data(data_period).head(8000)
     stock_names = df_stocks[ENTITY].unique()
 
+    # preapare data with slide, time window as fold -> test + train X features + targets
     folds_loaded = prepare_folds(df_stocks, stock_to_compare, window_len, slide,next_t, n_folds, experiment_path, force)
 
+    #calculate similarity between stocks
     similarities = get_similarity(df_stocks, stock_to_compare, stock_names, similarity_func, experiment_path, force)
     names_top_k = select_k_func(stock_names, similarities, k)
 
-    folds_loaded_top_k = [fold_loaded[fold_loaded[ENTITY].isin(names_top_k)] for fold_loaded in folds_loaded]
-    folds_X_train, folds_Y_train, folds_X_test, folds_Y_test = folds_loaded_top_k[0], folds_loaded_top_k[1], folds_loaded_top_k[2], folds_loaded_top_k[3]
+    #filter only k similar stocks
+    folds_loaded_top_k = [ [dataset[dataset[ENTITY].isin(names_top_k)].reset_index(drop = True) for dataset in fold_data] for fold_data in folds_loaded]
+
+    folds_X_train, folds_Y_train, folds_X_test, folds_Y_test = folds_loaded_top_k[0], \
+                                                               folds_loaded_top_k[1], \
+                                                               folds_loaded_top_k[2], \
+                                                               folds_loaded_top_k[3]
+
 
     evaluations = [evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, model,
                                   models_arg[model.__name__],
                                   [mean_squared_error], [simple_profit_evaluation, long_short_profit_evaluation],to_classification) for model in models]
 
     eval_path = os.path.join(experiment_path, 'evaluations.csv')
-    pd.concat(evaluations).to_csv(eval_path)
+    pd.concat(evaluations).to_csv(eval_path,mode = 'a')
 
 
 def main():
@@ -296,19 +383,20 @@ def main():
         'data_period': ['1yr'],
         'n_folds' : [5],
         # tech, finance, service, health, consumer, Industrial
-        'stock_to_compare' : ["GOOGL", "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
-        'k' : [1, 5, 10, 100],
+        'stock_to_compare' : ["GOOGL"], #, "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
+        'k' : [5],#, 1,  10, 100],
         'select_k_func' : [get_top_k],
-        'window_len' : [5, 10, 20],
-        'slide' : [1, 3, 5, 10],
+        'window_len' : [10],#, 5, 20],
+        'slide' : [1],#, 3, 5, 10],
         'to_classification' : [statistical_targeting],
         'similarity_func' : [apply_dtw]
     }
 
     experiment_static_params =  {
         'next_t': [1, 3, 7],
-        'models': [RandomForestRegressor, GradientBoostingRegressor],
-        'models_arg' : {RandomForestRegressor.__name__: {'n_estimators': 100},
+        'models': [RandomForestClassifier, RandomForestRegressor, GradientBoostingRegressor],
+        'models_arg' : {RandomForestClassifier.__name__: {'n_estimators': 100},
+                        RandomForestRegressor.__name__: {'n_estimators': 100},
                    GradientBoostingRegressor.__name__: {'learning_rate': 0.02}}
     }
 
@@ -321,33 +409,6 @@ def main():
 
 
 main()
-
-# for i in range(len(stock_names)):
-#     for j in range(i,len(stock_names)):
-#         stock0 = all_stocks[all_stocks['Name'] == stock_names[i]][['Open', 'Date']]
-#         stock1 = all_stocks[all_stocks['Name'] == stock_names[j]][['Open', 'Date']]
-#         x = (stock0['Open'].tolist())
-#         y = (stock1['Open'].tolist())
-#         dist, cost, acc, path = dtw(x, x , dist=lambda x, y: abs(x - y))
-
-
-#x = np.array(x)
-# all_stocks = all_stocks[:252*25]
-# stock_names = stock_names[:25]
-#similarities = \
-   # [
-   #      [
-   #          dtw(all_stocks[all_stocks['Name'] == stock_name_1][['Open', 'Date']]['Open'].tolist(),
-   #              all_stocks[all_stocks['Name'] == stock_name_2][['Open', 'Date']]['Open'].tolist(),
-   #              dist=lambda x, y: abs(x - y))
-   #          for stock_name_2 in stock_names
-   #          ]
-   #      for stock_name_1 in stock_names
-   #  ]
-
-#min_len = all_stocks.groupby(['Name'],axis=0)['Name'].count()
-#min_len = min_len[min_len == min_len[min_len.loc[stock]]].index.values.tolist()
-
 
 
 
