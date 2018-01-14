@@ -7,9 +7,11 @@ from dtw import dtw
 import pickle
 
 from sklearn.base import RegressorMixin
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import auc
 from sklearn.metrics import f1_score
@@ -24,6 +26,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.utils import resample
+
+import LSTM_stock
 
 home_path = 'C:\\Users\\Lior\\StockSimilarity'
 
@@ -68,6 +72,7 @@ def apply_dtw(stock1, stock2):
     stock1, stock2 = fix_stock_len(stock1, stock2)
     return dtw(stock1, stock2, dist=lambda x, y: abs(x - y))[0]
 
+
 def apply_pearson(stock1, stock2):
     """
     apply pearson distance between 2 stocks
@@ -77,6 +82,7 @@ def apply_pearson(stock1, stock2):
     """
     stock1, stock2 = fix_stock_len(stock1, stock2)
     return np.corrcoef(stock1, stock2)[0, 1]
+
 
 def apply_euclidean(stock1, stock2):
     """
@@ -88,6 +94,7 @@ def apply_euclidean(stock1, stock2):
 
     stock1, stock2 = fix_stock_len(stock1, stock2)
     return np.linalg.norm(stock1 - stock2)
+
 
 class model_bases_distance(object):
     def __init__(self, model):
@@ -210,7 +217,7 @@ def get_random_k(stock_names, similarities, k):
 
 
 ##################  Data preparation for Time Series #################
-def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window):
+def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window, to_pivot= True):
     """
     prepare stock data for classifcation as follows: each window of series data is an instance, the instances are computed in sliding window manner,
     for each instance a next future targets values are computed
@@ -226,14 +233,22 @@ def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window):
     X_stocks_windows = []
     Y_ = []
     Y_price = []
+    if not to_pivot:
+        stock_name = stock_X[ENTITY].unique()[0]
+        X_stocks_windows = {}
     while i < len(stock_X[ENTITY]) - window_len - max(next_t):
         y_ti = i + window_len + np.asarray(next_t)
 
         stock_X_window = stock_X[i:i + window_len]
         stock_X_window.insert(0, 't', range(window_len))
-        stock_X_window_flat = stock_X_window[column_to_window + [ENTITY] + ['t']].pivot(index = ENTITY,columns = 't').iloc[0].to_dict()
-        stock_X_window_flat[TIME] = i
-        X_stocks_windows.append(stock_X_window_flat)
+        if to_pivot:
+            stock_X_window_flat = stock_X_window[column_to_window + [ENTITY] + ['t']].pivot(index = ENTITY,columns = 't').iloc[0].to_dict()
+            stock_X_window_flat[TIME] = i
+            X_stocks_windows.append(stock_X_window_flat)
+        else:
+            stock_X_window_df = stock_X_window[column_to_window]
+            X_stocks_windows[stock_name + str(i)] = stock_X_window_df
+
         next_y = np.array(stock_X[TARGET + "_prep"].tolist())[y_ti]
         y_vals = next_y.tolist()
         y_ = {}
@@ -250,16 +265,19 @@ def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window):
         Y_price.append(y_price)
 
         i += slide
-
-    return pd.DataFrame.from_records(X_stocks_windows,index=[TIME]),\
+    if to_pivot:
+        X = pd.DataFrame.from_records(X_stocks_windows, index=[TIME])
+    else:
+        X = pd.concat(X_stocks_windows)
+    return X ,\
            pd.DataFrame(Y_),\
            pd.DataFrame(Y_price)
 
 
-def prepare_rolling_periods(df_stocks, stock_to_compare,
-                            start_period_train, end_period_train, start_period_test,end_period_test,
-                            similarity_func, select_k_func, k, preprocessing_pipeline, experiment_path,
-                            window_len, slide, next_t, weighted_sampleing):
+def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
+                                           start_period_train, end_period_train, start_period_test, end_period_test,
+                                           similarity_func, select_k_func, k, preprocessing_pipeline, experiment_path,
+                                           window_len, slide, next_t, weighted_sampleing, force = False, to_pivot = True):
     """
     split the data to train period and evaluation period, the entire preprocessing parameters are computed seperatly
      per k neareast stock on the train period and then applied also on the evaluation period,
@@ -299,7 +317,7 @@ def prepare_rolling_periods(df_stocks, stock_to_compare,
     #calc similar stock on all previous data
     prev_stocks_names = train_X_all_prev_periods[ENTITY].unique()
     similarities = get_similarity(train_X_all_prev_periods, stock_to_compare, prev_stocks_names,
-                                  similarity_func, experiment_path, split_time = str(end_period_train))
+                                  similarity_func, experiment_path, split_time = str(end_period_train), force=force)
     top_stocks = select_k_func(prev_stocks_names, similarities, k)
     stocks_val = list(top_stocks.values())
 
@@ -322,10 +340,11 @@ def prepare_rolling_periods(df_stocks, stock_to_compare,
         train_stock_X_norm_df = pd.DataFrame(train_stock_X_norm, columns=numeric_cols_prep)
         train_stock_X_prep = pd.merge(train_stock_X_names_df, train_stock_X_norm_df, left_index=True, right_index=True)
 
+
         stock_train_windows_x, stock_train_windows_y, stock_prices_train = prepare_stock_windows(train_stock_X_prep,
                                                                                                  window_len, slide,
                                                                                                  next_t,
-                                                                                                 numeric_cols_prep)
+                                                                                                 numeric_cols_prep,to_pivot)
         if stock_name == stock_to_compare:
             train_windows_x.append(stock_train_windows_x)
             train_windows_y.append(stock_train_windows_y)
@@ -338,7 +357,7 @@ def prepare_rolling_periods(df_stocks, stock_to_compare,
 
             stock_test_windows_x, stock_test_windows_y, stock_prices_test = prepare_stock_windows(test_stock_X_prep,
                                                                                               window_len, slide, next_t,
-                                                                                              numeric_cols_prep)
+                                                                                              numeric_cols_prep,to_pivot)
             test_windows_x.append(stock_test_windows_x)
             test_windows_y.append(stock_test_windows_y)
             test_price.append(stock_prices_test)
@@ -351,7 +370,6 @@ def prepare_rolling_periods(df_stocks, stock_to_compare,
                 stock_train_windows_x_s = stock_train_windows_x[msk]
                 stock_train_windows_y_s = stock_train_windows_y[msk]
 
-
             train_windows_x.append(stock_train_windows_x_s)
             train_windows_y.append(stock_train_windows_y_s)
 
@@ -361,7 +379,7 @@ def prepare_rolling_periods(df_stocks, stock_to_compare,
 
 
 def prepare_folds(df_stocks, stock_to_compare, window_len, slide,next_t, n_folds, experiment_path, force,
-                  similarity_func, select_k_func, k, preprocessing_pipeline,weighted_sampleing):
+                  similarity_func, select_k_func, k, preprocessing_pipeline,weighted_sampleing,to_pivot= True):
     """
     prepare a rolling folds evaluations
     :param df_stocks:
@@ -404,10 +422,10 @@ def prepare_folds(df_stocks, stock_to_compare, window_len, slide,next_t, n_folds
         train_windows_x, train_windows_y,\
         test_windows_x, test_windows_y, test_price,\
         top_stocks = \
-            prepare_rolling_periods(df_stocks, stock_to_compare,
-                        start_period_train, end_period_train, start_period_test,end_period_test,
-                        similarity_func, select_k_func, k, preprocessing_pipeline, experiment_path,
-                        window_len, slide, next_t,weighted_sampleing)
+            prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
+                                                   start_period_train, end_period_train, start_period_test, end_period_test,
+                                                   similarity_func, select_k_func, k, preprocessing_pipeline, experiment_path,
+                                                   window_len, slide, next_t, weighted_sampleing, force, to_pivot)
 
         folds_X_train.append(train_windows_x)
         folds_Y_train.append(train_windows_y)
@@ -649,7 +667,7 @@ def save_evaluations(data_period, evaluations, experiment_path, features_selecti
 def run_experiment(data_period, stock_to_compare, preprocessing_pipeline,features_selection,
                    similarity_func, k, select_k_func,
                    window_len, slide, next_t, n_folds,
-                   models, models_arg, target_discretization,weighted_sampleing, force=False):
+                   models, models_arg, target_discretization,weighted_sampleing, to_pivot = True, force=False):
     """
     run the entire experiments on the diffrent parameters and saves the data to csv.
     :param data_period: 1yr / 5yr
@@ -680,7 +698,7 @@ def run_experiment(data_period, stock_to_compare, preprocessing_pipeline,feature
                                  window_len, slide,next_t, n_folds,
                                  experiment_path, force,
                                  similarity_func, select_k_func, k,
-                                 preprocessing_pipeline,weighted_sampleing)
+                                 preprocessing_pipeline,weighted_sampleing,to_pivot)
 
     folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test = \
         folds_loaded[0], \
@@ -700,11 +718,7 @@ def run_experiment(data_period, stock_to_compare, preprocessing_pipeline,feature
                      weighted_sampleing, window_len)
 
 
-
-
 def main():
-
-
     experiment_params = {
         'data_period': ['1yr'],
         'n_folds' : [6],
@@ -726,9 +740,12 @@ def main():
     experiment_static_params = \
         {
             'next_t': [1, 3, 7],
-            'models': [RandomForestClassifier, RandomForestRegressor,GradientBoostingRegressor],
+            'to_pivot': False,
+            'models': [LogisticRegression, RandomForestClassifier, RandomForestRegressor,GradientBoostingRegressor,GradientBoostingClassifier],
             'models_arg' : {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state' : 0},
                             RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state' : 0},
+                            LogisticRegression.__name__: {},
+                            GradientBoostingClassifier.__name__: {'learning_rate': 0.02, 'random_state': 0},
                             GradientBoostingRegressor.__name__: {'learning_rate': 0.02,'random_state' : 0}}
         }
 
@@ -738,8 +755,20 @@ def main():
         print "run experiment: " + str(experiment)
         run_experiment(**experiment)
 
+    experiment_static_params = \
+        {
+            'next_t': [1, 3, 7],
+            'to_pivot': True,
+            'models': [LSTM_stock],
+            'models_arg': {LSTM_stock.__name__: {},
+                           }
+        }
 
-
+    experiments = get_index_product(experiment_params)
+    for experiment in experiments:
+        experiment.update(experiment_static_params)
+        print "run experiment: " + str(experiment)
+        #run_experiment(**experiment)
 
 main()
 
