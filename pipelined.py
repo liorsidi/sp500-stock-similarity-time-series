@@ -27,7 +27,6 @@ from sklearn.preprocessing import LabelBinarizer
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.utils import resample
 
-import LSTM_stock
 
 home_path = 'C:\\Users\\Lior\\StockSimilarity'
 
@@ -81,7 +80,8 @@ def apply_pearson(stock1, stock2):
     :return:
     """
     stock1, stock2 = fix_stock_len(stock1, stock2)
-    return np.corrcoef(stock1, stock2)[0, 1]
+    pearson = np.corrcoef(np.array(stock1), np.array(stock2))[0, 1]
+    return abs(pearson - 1)
 
 
 def apply_euclidean(stock1, stock2):
@@ -93,7 +93,7 @@ def apply_euclidean(stock1, stock2):
     """
 
     stock1, stock2 = fix_stock_len(stock1, stock2)
-    return np.linalg.norm(stock1 - stock2)
+    return np.linalg.norm(np.array(stock1) - np.array(stock2))
 
 
 class model_bases_distance(object):
@@ -322,11 +322,11 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
     stocks_val = list(top_stocks.values())
 
     top_stock_w = {}
-    for k, v in top_stocks.items():
-        if k == stock_to_compare:
-            top_stock_w[k] = 1.0
+    for stock_k, v in top_stocks.items():
+        if stock_k == stock_to_compare:
+            top_stock_w[stock_k] = 1.0
         else:
-            top_stock_w[k] = abs(float(v)-max(stocks_val)) / max(stocks_val)
+            top_stock_w[stock_k] = abs(float(v)-max(stocks_val)) / max(stocks_val)
 
     numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
     numeric_cols = train_X.select_dtypes(include=numerics).columns.tolist()
@@ -467,6 +467,7 @@ def simple_profit_evaluation(curr_price, predicted_price):
     in_position = False
     profit = 0
     last_buy = 0
+    profits = []
     for i in range(len(curr_price)):
         if predicted_price[i] > 0 and not in_position:
             in_position = True
@@ -474,7 +475,12 @@ def simple_profit_evaluation(curr_price, predicted_price):
         if predicted_price[i] < 0 and in_position:
             in_position = False
             profit = profit + (curr_price[i] - last_buy)
-    return profit
+
+        if in_position:
+            profits.append(profit + (curr_price[i] - last_buy))
+        else:
+            profits.append(profit)
+    return profit, profits
 
 
 def long_short_profit_evaluation(curr_price, predicted_price):
@@ -487,7 +493,7 @@ def long_short_profit_evaluation(curr_price, predicted_price):
     is_long = None
     profit = 0
     last_buy = 0
-
+    profits = []
     for i in range(len(curr_price)):
         #go long
         if predicted_price[i] > 0:
@@ -512,7 +518,10 @@ def long_short_profit_evaluation(curr_price, predicted_price):
             elif is_long is None:
                 last_buy = curr_price[i]
                 is_long = False
-    return profit
+
+        profits.append(profit)
+
+    return profit, profits
 
 
 ################# Experiments Executions ############################
@@ -537,7 +546,7 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
     print "evaluate modeL"
     future_ys = folds_Y_train[0].columns.tolist()
     evaluations = []
-
+    evaluations_values = []
     #iterate folds
     for f in range(len(folds_X_train)):
         features = [(fe + '_prep', wl) for fe in features_selection[1] for wl in range(window_len)]
@@ -563,16 +572,19 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
                 y_test_multi = lb.transform(y_test)
 
             model.fit(X_train, y_train)
-            y_preds = model.predict(X_test)
+            y_preds_val = model.predict(X_test)
 
             # if regressor then predict if will go up or down by the diffrence
             if isinstance(model, RegressorMixin):
-                y_preds = y_preds - y_test
+                y_preds = y_preds_val - y_test
+            else:
+                y_preds= y_preds_val
 
             fold_eval = {}
             fold_eval["fold"] = f
             fold_eval["model"] = model_class.__name__
             fold_eval["next_t"] = t
+
             for evaluation_method in evaluation_methods:
                 eval_error = dict(fold_eval)
                 eval_error["method"] = evaluation_method.__name__
@@ -594,12 +606,21 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
                     eval_error["value"] = evaluation_method(y_test_multi, lb.transform(y_preds))
                     evaluations.append(eval_error)
 
+            eval_values = pd.DataFrame()
+            eval_values['real'] = y_test
+            eval_values['prediction'] = y_preds
+            eval_values['regression_val'] = y_preds_val
+            eval_values['price'] = folds_price_test[f][t].values
+            for k1, v in fold_eval.items():
+                eval_values[k1] = v
             for profit_method in profit_methods:
                 eval_error = dict(fold_eval)
                 eval_error["method"] = profit_method.__name__
-                eval_error["value"] = profit_method(folds_price_test[f][t].values,y_preds)
+                eval_error["value"], eval_values[profit_method.__name__] = profit_method(folds_price_test[f][t].values,y_preds)
+                eval_error["sharp_ratio"] = np.mean(eval_values[profit_method.__name__]) / (np.std(eval_values[profit_method.__name__]) + 0.0001)
                 evaluations.append(eval_error)
-    return pd.DataFrame(evaluations)
+            evaluations_values.append(eval_values)
+    return pd.DataFrame(evaluations), pd.concat(evaluations_values)
 
 
 def get_index_product(params):
@@ -631,17 +652,26 @@ def get_index_product(params):
 def save_evaluations(data_period, evaluations, experiment_path, features_selection, folds_topk, k, n_folds,
                      preprocessing_pipeline, select_k_func, similarity_func, slide, stock_to_compare,
                      weighted_sampleing, window_len):
-    model_eval = pd.concat(evaluations)
-    model_eval['data_period'] = data_period
-    model_eval['stock_to_compare'] = stock_to_compare
-    model_eval['preprocessing_pipeline'] = " ".join(list(preprocessing_pipeline.named_steps.keys()))
-    model_eval['weighted_sampleing'] = weighted_sampleing
-    model_eval['similarity_func'] = similarity_func.__name__
-    model_eval['k'] = k
-    model_eval['select_k_func'] = select_k_func.__name__
-    model_eval['window_len'] = window_len
-    model_eval['slide'] = slide
-    model_eval['features_selection'] = features_selection[0]
+
+    evaluations_path = [os.path.join(experiment_path, 'models_evaluations.csv'),
+                        os.path.join(experiment_path, 'models_values_evaluations.csv')]
+
+    for model_i in range(len(evaluations)):
+        #evaluations[model_i][0] = pd.concat(evaluations[model_i][0])
+        for i in range(len(evaluations[model_i])):
+            model_eval = evaluations[model_i][i]
+            model_eval['data_period'] = data_period
+            model_eval['stock_to_compare'] = stock_to_compare
+            model_eval['preprocessing_pipeline'] = " ".join(list(preprocessing_pipeline.named_steps.keys()))
+            model_eval['weighted_sampleing'] = weighted_sampleing
+            model_eval['similarity_func'] = similarity_func.__name__
+            model_eval['k'] = k
+            model_eval['select_k_func'] = select_k_func.__name__
+            model_eval['window_len'] = window_len
+            model_eval['slide'] = slide
+            model_eval['features_selection'] = features_selection[0]
+            model_eval.to_csv(evaluations_path[i], mode='a')
+
     similar_stock_eval_folds = []
     for f in range(n_folds - 1):
         similar_stock_eval_fold = {}
@@ -658,9 +688,8 @@ def save_evaluations(data_period, evaluations, experiment_path, features_selecti
             stock_f['name'] = name
             stock_f['distance'] = distance
             similar_stock_eval_folds.append(stock_f)
-    model_eval_path = os.path.join(experiment_path, 'models_evaluations.csv')
+
     sim_eval_path = os.path.join(experiment_path, 'similarity_evaluations.csv')
-    model_eval.to_csv(model_eval_path, mode='a')
     pd.DataFrame(similar_stock_eval_folds).to_csv(sim_eval_path, mode='a')
 
 
@@ -724,12 +753,12 @@ def main():
         'n_folds' : [6],
         # tech, finance, service, health, consumer, Industrial
         'stock_to_compare' : ["GOOGL"], #, "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
-        'k' : [10, 1, 50],
+        'k' : [10, 1],#, 50],
         'select_k_func' : [get_top_k, get_random_k],#, get_top_k],
         'window_len' : [10],#, 5, 20],
         'slide' : [1],#, 3, 5, 10],
         'preprocessing_pipeline' : [Pipeline([('minmax_normalize', MinMaxScaler())])],
-        'similarity_func' : [model_bases_distance(RandomForestRegressor(100,random_state = 0)),apply_euclidean, apply_pearson,apply_dtw],
+        'similarity_func' : [apply_pearson,apply_euclidean,apply_dtw], #model_bases_distance(RandomForestRegressor(100,random_state = 0))
         'weighted_sampleing': [True, False],
         'target_discretization' : [statistical_targeting],
         'features_selection': [#('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
@@ -740,8 +769,8 @@ def main():
     experiment_static_params = \
         {
             'next_t': [1, 3, 7],
-            'to_pivot': False,
-            'models': [LogisticRegression, RandomForestClassifier, RandomForestRegressor,GradientBoostingRegressor,GradientBoostingClassifier],
+            'to_pivot': True,
+            'models': [RandomForestClassifier, RandomForestRegressor],#,GradientBoostingRegressor,GradientBoostingClassifier],
             'models_arg' : {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state' : 0},
                             RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state' : 0},
                             LogisticRegression.__name__: {},
@@ -758,10 +787,10 @@ def main():
     experiment_static_params = \
         {
             'next_t': [1, 3, 7],
-            'to_pivot': True,
-            'models': [LSTM_stock],
-            'models_arg': {LSTM_stock.__name__: {},
-                           }
+            'to_pivot': False
+           # 'models': [LSTM_stock],
+            #'models_arg': {LSTM_stock.__name__: {},
+                           #}
         }
 
     experiments = get_index_product(experiment_params)
