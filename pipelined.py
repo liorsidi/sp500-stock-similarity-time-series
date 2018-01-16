@@ -126,8 +126,12 @@ class model_bases_distance(object):
         :param stock2:
         :return:
         """
+        print len(stock_X)
         stock_X_prep = self.stock_norm_prep(stock_X)
         x, y, p = prepare_stock_windows(stock_X_prep, 10, 1, [1], [TARGET + '_prep'])
+
+        if len(stock_X) < 10 :
+            b =1
         preds = self.model.predict(x)
 
         return mean_squared_error(y,preds)
@@ -184,12 +188,14 @@ def get_top_k(stock_names, similarities, k):
     :return: list of top stocks
     """
     s = np.array(similarities)
+    k = k+1
     idx = np.argpartition(s, k)
     names_top_k = np.array(stock_names)[idx[:k]]
     sim_top_k = s[idx[:k]]
     top_stocks = {}
     for i in range(len(names_top_k)):
         top_stocks[names_top_k[i]] = sim_top_k[i]
+
     return top_stocks
 
 
@@ -315,22 +321,39 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
     train_windows_x, train_windows_y, train_price, test_windows_x, test_windows_y, test_price = [], [], [], [], [],[]
 
     #calc similar stock on all previous data
-    prev_stocks_names = train_X_all_prev_periods[ENTITY].unique()
+    count_stock = train_X_all_prev_periods.groupby([ENTITY]).count()[TIME].reset_index()
+
+    prev_stocks_names = count_stock[count_stock[TIME] > window_len][ENTITY].tolist()
+    #prev_stocks_names = train_X_all_prev_periods[ENTITY].unique()
     similarities = get_similarity(train_X_all_prev_periods, stock_to_compare, prev_stocks_names,
                                   similarity_func, experiment_path, split_time = str(end_period_train), force=force)
+
     top_stocks = select_k_func(prev_stocks_names, similarities, k)
     stocks_val = list(top_stocks.values())
-
     top_stock_w = {}
     for stock_k, v in top_stocks.items():
-        if stock_k == stock_to_compare:
-            top_stock_w[stock_k] = 1.0
-        else:
+        if stock_k != stock_to_compare:
             top_stock_w[stock_k] = abs(float(v)-max(stocks_val)) / max(stocks_val)
+        else:
+            top_stock_w[stock_to_compare] = 1.0
 
     numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
     numeric_cols = train_X.select_dtypes(include=numerics).columns.tolist()
     numeric_cols_prep = [s + "_prep" for s in numeric_cols]
+
+    ### prepare test
+    test_stock_X = test_X[test_X[ENTITY] == stock_to_compare].reset_index(drop=True)
+    test_stock_X_names_df = test_stock_X[[ENTITY, TARGET]]
+    test_stock_X_norm = preprocessing_pipeline.fit_transform(test_stock_X[numeric_cols])
+    test_stock_X_norm_df = pd.DataFrame(test_stock_X_norm, columns=numeric_cols_prep)
+    test_stock_X_prep = pd.merge(test_stock_X_names_df, test_stock_X_norm_df, left_index=True, right_index=True)
+
+    stock_test_windows_x, stock_test_windows_y, stock_prices_test = prepare_stock_windows(test_stock_X_prep,
+                                                                                          window_len, slide, next_t,
+                                                                                          numeric_cols_prep, to_pivot)
+    test_windows_x.append(stock_test_windows_x)
+    test_windows_y.append(stock_test_windows_y)
+    test_price.append(stock_prices_test)
 
     #prepare windows per stock
     for stock_name in top_stocks.keys():
@@ -340,38 +363,21 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
         train_stock_X_norm_df = pd.DataFrame(train_stock_X_norm, columns=numeric_cols_prep)
         train_stock_X_prep = pd.merge(train_stock_X_names_df, train_stock_X_norm_df, left_index=True, right_index=True)
 
-
         stock_train_windows_x, stock_train_windows_y, stock_prices_train = prepare_stock_windows(train_stock_X_prep,
                                                                                                  window_len, slide,
                                                                                                  next_t,
                                                                                                  numeric_cols_prep,to_pivot)
-        if stock_name == stock_to_compare:
-            train_windows_x.append(stock_train_windows_x)
-            train_windows_y.append(stock_train_windows_y)
 
-            test_stock_X = test_X[test_X[ENTITY] == stock_name].reset_index(drop=True)
-            test_stock_X_names_df = test_stock_X[[ENTITY, TARGET]]
-            test_stock_X_norm = preprocessing_pipeline.fit_transform(test_stock_X[numeric_cols])
-            test_stock_X_norm_df = pd.DataFrame(test_stock_X_norm, columns=numeric_cols_prep)
-            test_stock_X_prep = pd.merge(test_stock_X_names_df, test_stock_X_norm_df, left_index=True, right_index=True)
+        stock_train_windows_x_s = stock_train_windows_x
+        stock_train_windows_y_s = stock_train_windows_y
+        if weighted_sampleing:
+            #_, _, stock_train_windows_x_s, stock_train_windows_y_s = train_test_split(stock_train_windows_x, stock_train_windows_y, test_size = top_stock_w[stock_name], random_state = 42)
+            msk = np.random.rand(len(stock_train_windows_x)) < top_stock_w[stock_name]
+            stock_train_windows_x_s = stock_train_windows_x[msk]
+            stock_train_windows_y_s = stock_train_windows_y[msk]
 
-            stock_test_windows_x, stock_test_windows_y, stock_prices_test = prepare_stock_windows(test_stock_X_prep,
-                                                                                              window_len, slide, next_t,
-                                                                                              numeric_cols_prep,to_pivot)
-            test_windows_x.append(stock_test_windows_x)
-            test_windows_y.append(stock_test_windows_y)
-            test_price.append(stock_prices_test)
-        else:
-            stock_train_windows_x_s = stock_train_windows_x
-            stock_train_windows_y_s = stock_train_windows_y
-            if weighted_sampleing:
-                #_, _, stock_train_windows_x_s, stock_train_windows_y_s = train_test_split(stock_train_windows_x, stock_train_windows_y, test_size = top_stock_w[stock_name], random_state = 42)
-                msk = np.random.rand(len(stock_train_windows_x)) < top_stock_w[stock_name]
-                stock_train_windows_x_s = stock_train_windows_x[msk]
-                stock_train_windows_y_s = stock_train_windows_y[msk]
-
-            train_windows_x.append(stock_train_windows_x_s)
-            train_windows_y.append(stock_train_windows_y_s)
+        train_windows_x.append(stock_train_windows_x_s)
+        train_windows_y.append(stock_train_windows_y_s)
 
     return pd.concat(train_windows_x), pd.concat(train_windows_y),\
            pd.concat(test_windows_x), pd.concat(test_windows_y), pd.concat(test_price),\
@@ -449,11 +455,12 @@ def statistical_targeting(curr_price, future_price):
     avg = np.mean(diff_prices)
     std = np.std(diff_prices)
 
-    w = 1
+    w = 2.0
     target = [0]
     while len(set(target)) != 3:
         target = [np.sign(diff_price) if abs(diff_price) > (avg + w*std) else 0 for diff_price in diff_prices]
-        w = w / 2
+        w = w * 0.5
+    print w
     return target
 
 ################# Evaluation methods ################################
@@ -543,7 +550,8 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
     :param target_discretization:
     :return: evaluations
     """
-    print "evaluate modeL"
+    print "evaluate model"
+    print model_class.__name__
     future_ys = folds_Y_train[0].columns.tolist()
     evaluations = []
     evaluations_values = []
@@ -753,15 +761,15 @@ def main():
         'n_folds' : [6],
         # tech, finance, service, health, consumer, Industrial
         'stock_to_compare' : ["GOOGL"], #, "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
-        'k' : [10, 1],#, 50],
-        'select_k_func' : [get_top_k, get_random_k],#, get_top_k],
+        'k' : [10, 1 , 25],
+        'select_k_func' : [get_top_k, get_random_k],
         'window_len' : [10],#, 5, 20],
         'slide' : [1],#, 3, 5, 10],
         'preprocessing_pipeline' : [Pipeline([('minmax_normalize', MinMaxScaler())])],
-        'similarity_func' : [apply_pearson,apply_euclidean,apply_dtw], #model_bases_distance(RandomForestRegressor(100,random_state = 0))
+        'similarity_func' : [model_bases_distance(RandomForestRegressor(100,random_state = 0)), apply_pearson,apply_euclidean,apply_dtw],
         'weighted_sampleing': [True, False],
         'target_discretization' : [statistical_targeting],
-        'features_selection': [#('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
+        'features_selection': [('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
                      ('only_close', [u'Close']),
                      ('open_close_volume', [u'Open', u'Close', u'Volume'])]
     }
@@ -770,7 +778,7 @@ def main():
         {
             'next_t': [1, 3, 7],
             'to_pivot': True,
-            'models': [RandomForestClassifier, RandomForestRegressor],#,GradientBoostingRegressor,GradientBoostingClassifier],
+            'models': [RandomForestClassifier, RandomForestRegressor,GradientBoostingRegressor,GradientBoostingClassifier],
             'models_arg' : {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state' : 0},
                             RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state' : 0},
                             LogisticRegression.__name__: {},
@@ -780,8 +788,8 @@ def main():
 
     experiments = get_index_product(experiment_params)
     for experiment in experiments:
-        experiment.update(experiment_static_params)
         print "run experiment: " + str(experiment)
+        experiment.update(experiment_static_params)
         run_experiment(**experiment)
 
     experiment_static_params = \
@@ -795,8 +803,9 @@ def main():
 
     experiments = get_index_product(experiment_params)
     for experiment in experiments:
-        experiment.update(experiment_static_params)
         print "run experiment: " + str(experiment)
+        experiment.update(experiment_static_params)
+
         #run_experiment(**experiment)
 
 main()
