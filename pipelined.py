@@ -98,6 +98,7 @@ def apply_euclidean(stock1, stock2):
 
 class model_bases_distance(object):
     def __init__(self, model):
+        #TODO save static model
         self.model = model
 
     def stock_norm_prep(self,stock_X):
@@ -116,7 +117,7 @@ class model_bases_distance(object):
 
     def fit(self, stock_X):
         stock_X_prep = self.stock_norm_prep(stock_X)
-        x, y, p = prepare_stock_windows(stock_X_prep, 10,1, [1], [TARGET+ '_prep'])
+        x, y, _ = prepare_stock_windows(stock_X_prep, 10,1, [1], [TARGET+ '_prep'])
         self.model.fit(x,y)
 
     def apply_distance(self, stock_X):
@@ -128,10 +129,8 @@ class model_bases_distance(object):
         """
         print len(stock_X)
         stock_X_prep = self.stock_norm_prep(stock_X)
-        x, y, p = prepare_stock_windows(stock_X_prep, 10, 1, [1], [TARGET + '_prep'])
+        x, y, _ = prepare_stock_windows(stock_X_prep, 10, 1, [1], [TARGET + '_prep'])
 
-        if len(stock_X) < 10 :
-            b =1
         preds = self.model.predict(x)
 
         return mean_squared_error(y,preds)
@@ -232,6 +231,7 @@ def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window, t
     :param slide: the sliding movenet between windows calculation
     :param next_t: the future time targets
     :param column_to_window: columns names to be calculated and flatten per window
+    :to_pivot: in case of flatten the data set for regular regression or classification
     :return: DataFrames: the dataset instances, the values to predict and the original prices to be evaluated by profit
     """
     i = 0
@@ -244,7 +244,6 @@ def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window, t
         X_stocks_windows = {}
     while i < len(stock_X[ENTITY]) - window_len - max(next_t):
         y_ti = i + window_len + np.asarray(next_t)
-
         stock_X_window = stock_X[i:i + window_len]
         stock_X_window.insert(0, 't', range(window_len))
         if to_pivot:
@@ -262,13 +261,19 @@ def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window, t
             y_[str(y_column_names[c])] = y_vals[c]
         Y_.append(y_)
 
-        next_price = np.array(stock_X[TARGET].tolist())[y_ti]
-        price_vals = next_price.tolist()
+        #the current window last price
         y_price = {}
-        for c in range(len(y_column_names)):
-            y_price[str(y_column_names[c])] = price_vals[c]
+        y_price[TARGET] = np.array(stock_X[TARGET].tolist())[i + window_len].tolist()
         y_price[TIME] = i
         Y_price.append(y_price)
+
+        # next_price = np.array(stock_X[TARGET].tolist())[y_ti]
+        # price_vals = next_price.tolist()
+        # y_price = {}
+        # for c in range(len(y_column_names)):
+        #     y_price[str(y_column_names[c])] = price_vals[c]
+        # y_price[TIME] = i
+        # Y_price.append(y_price)
 
         i += slide
     if to_pivot:
@@ -320,14 +325,11 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
 
     train_windows_x, train_windows_y, train_price, test_windows_x, test_windows_y, test_price = [], [], [], [], [],[]
 
-    #calc similar stock on all previous data
+    #calc similar stock on all previous data with atleast window len amount of recoeds
     count_stock = train_X_all_prev_periods.groupby([ENTITY]).count()[TIME].reset_index()
-
     prev_stocks_names = count_stock[count_stock[TIME] > window_len][ENTITY].tolist()
-    #prev_stocks_names = train_X_all_prev_periods[ENTITY].unique()
     similarities = get_similarity(train_X_all_prev_periods, stock_to_compare, prev_stocks_names,
                                   similarity_func, experiment_path, split_time = str(end_period_train), force=force)
-
     top_stocks = select_k_func(prev_stocks_names, similarities, k)
     stocks_val = list(top_stocks.values())
     top_stock_w = {}
@@ -341,7 +343,7 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
     numeric_cols = train_X.select_dtypes(include=numerics).columns.tolist()
     numeric_cols_prep = [s + "_prep" for s in numeric_cols]
 
-    ### prepare test
+    ### prepare test only from the stock to compare
     test_stock_X = test_X[test_X[ENTITY] == stock_to_compare].reset_index(drop=True)
     test_stock_X_names_df = test_stock_X[[ENTITY, TARGET]]
     test_stock_X_norm = preprocessing_pipeline.fit_transform(test_stock_X[numeric_cols])
@@ -372,6 +374,7 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
         stock_train_windows_y_s = stock_train_windows_y
         if weighted_sampleing:
             #_, _, stock_train_windows_x_s, stock_train_windows_y_s = train_test_split(stock_train_windows_x, stock_train_windows_y, test_size = top_stock_w[stock_name], random_state = 42)
+            np.random.seed(0)
             msk = np.random.rand(len(stock_train_windows_x)) < top_stock_w[stock_name]
             stock_train_windows_x_s = stock_train_windows_x[msk]
             stock_train_windows_y_s = stock_train_windows_y[msk]
@@ -408,7 +411,6 @@ def prepare_folds(df_stocks, stock_to_compare, window_len, slide,next_t, n_folds
     period_len = int(abs(len(stock_times)/n_folds))
     folds_X_train = []
     folds_Y_train = []
-    folds_price_train = []
 
     folds_X_test = []
     folds_Y_test = []
@@ -463,6 +465,17 @@ def statistical_targeting(curr_price, future_price):
     print w
     return target
 
+
+def diffrence_targeting(curr_price, future_price):
+    """
+    prepare continues data for classification task - up = 1, down =-1 or same= 0
+    :param curr_price:
+    :param future_price:
+    :return:
+    """
+    diff_prices = np.sign(future_price - curr_price)
+    return diff_prices
+
 ################# Evaluation methods ################################
 def simple_profit_evaluation(curr_price, predicted_price):
     """
@@ -482,7 +495,6 @@ def simple_profit_evaluation(curr_price, predicted_price):
         if predicted_price[i] < 0 and in_position:
             in_position = False
             profit = profit + (curr_price[i] - last_buy)
-
         if in_position:
             profits.append(profit + (curr_price[i] - last_buy))
         else:
@@ -501,6 +513,7 @@ def long_short_profit_evaluation(curr_price, predicted_price):
     profit = 0
     last_buy = 0
     profits = []
+    position = 0
     for i in range(len(curr_price)):
         #go long
         if predicted_price[i] > 0:
@@ -510,29 +523,34 @@ def long_short_profit_evaluation(curr_price, predicted_price):
                 is_long = True
             # if short position - close it and go long
             elif not is_long:
-                profit += last_buy - curr_price[i]
+                profit = profit + (last_buy - curr_price[i])
+                position = profit
                 last_buy = curr_price[i]
                 is_long = True
+            elif is_long:
+                position = profit + (curr_price[i] - last_buy)
 
         #go short
         if  predicted_price[i]<0:
-            # if long position - close it and go short
-            if is_long:
-                profit += curr_price[i] - last_buy
-                last_buy = curr_price[i]
-                is_long = False
             # first time
-            elif is_long is None:
+            if is_long is None:
                 last_buy = curr_price[i]
                 is_long = False
+            # if long position - close it and go short
+            elif is_long:
+                profit = profit + (curr_price[i] - last_buy)
+                position = profit
+                last_buy = curr_price[i]
+                is_long = False
+            elif not is_long:
+                position = profit + (last_buy - curr_price[i])
 
-        profits.append(profit)
+        profits.append(position)
 
     return profit, profits
 
 
 ################# Experiments Executions ############################
-
 def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test,
                    features_selection, model_class,model_args, evaluation_methods, profit_methods, target_discretization):
     """
@@ -560,7 +578,7 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
         features = [(fe + '_prep', wl) for fe in features_selection[1] for wl in range(window_len)]
         X_train = folds_X_train[f][features]
         X_test = folds_X_test[f][features]
-        #X_test_curr_price = X_test[(TARGET , window_len - 1)].tolist()
+        price_test = folds_price_test[f][TARGET]
 
         # iterate future value to predict
         for t in future_ys:
@@ -568,65 +586,81 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
             y_test = folds_Y_test[f][t].values
 
             model = model_class(**model_args)
+
+            #todo - if pivot
+
+            #prepare data for classification fit and evaluation
             lb = LabelBinarizer()
+            X_train_curr_price_prep = X_train[(TARGET + "_prep", window_len - 1)].tolist()
+            y_train_binary = np.sign(y_train - X_train_curr_price_prep)
+            lb.fit(y_train_binary)
+
+            X_test_curr_price_prep = X_test[(TARGET + "_prep", window_len - 1)].tolist()
+            y_test_binary = np.sign(y_test - X_test_curr_price_prep)
+
+            # lb = LabelBinarizer()
             # if classifier then descrtisize target value
-            if not isinstance(model, RegressorMixin):
-                X_train_curr_price = X_train[(TARGET + "_prep", window_len - 1)].tolist()
-                y_train = target_discretization(X_train_curr_price, y_train)
+            # if not isinstance(model, RegressorMixin):
+            #     X_train_curr_price = X_train[(TARGET + "_prep", window_len - 1)].tolist()
+            #     y_train = target_discretization(X_train_curr_price, y_train)
+            #
+            #     X_test_curr_price = X_test[(TARGET + "_prep", window_len - 1)].tolist()
+            #     y_test = target_discretization(X_test_curr_price, y_test)
+            #     lb.fit(y_train)
+            #     y_test_multi = lb.transform(y_test)
 
-                X_test_curr_price = X_test[(TARGET + "_prep", window_len - 1)].tolist()
-                y_test = target_discretization(X_test_curr_price, y_test)
-                lb.fit(y_train)
-                y_test_multi = lb.transform(y_test)
+            #if regression then train on original values and transform to binary
 
-            model.fit(X_train, y_train)
-            y_preds_val = model.predict(X_test)
-
-            # if regressor then predict if will go up or down by the diffrence
             if isinstance(model, RegressorMixin):
-                y_preds = y_preds_val - y_test
+                model.fit(X_train, y_train)
+                y_preds_val = model.predict(X_test)
+                y_preds_binary = np.sign(y_preds_val - X_test_curr_price_prep)
             else:
-                y_preds= y_preds_val
+                model.fit(X_train, y_train_binary)
+                y_preds_binary = model.predict(X_test)
 
             fold_eval = {}
             fold_eval["fold"] = f
             fold_eval["model"] = model_class.__name__
             fold_eval["next_t"] = t
 
-            for evaluation_method in evaluation_methods:
-                eval_error = dict(fold_eval)
-                eval_error["method"] = evaluation_method.__name__
-                eval_error["value"] = evaluation_method(y_test,y_preds)
-                evaluations.append(eval_error)
+            # for evaluation_method in evaluation_methods:
+            #     eval_error = dict(fold_eval)
+            #     eval_error["method"] = evaluation_method.__name__
+            #     eval_error["value"] = evaluation_method(y_test,y_preds)
+            #     evaluations.append(eval_error)
 
             # if classifier then evaluate with relevant measures
-            if not isinstance(model, RegressorMixin):
-                for evaluation_method in [roc_auc_score]:
-                    y_proba = model.predict_proba(X_test)
-                    for target in range(len(lb.classes_)):
-                        eval_error = dict(fold_eval)
-                        eval_error["method"] = evaluation_method.__name__ + "_class_" + str(lb.classes_[target])
-                        eval_error["value"] = evaluation_method(y_test_multi[:, target], y_proba[:, target])
-                        evaluations.append(eval_error)
-                for evaluation_method in [accuracy_score,log_loss]:
-                    eval_error = dict(fold_eval)
-                    eval_error["method"] = evaluation_method.__name__
-                    eval_error["value"] = evaluation_method(y_test_multi, lb.transform(y_preds))
-                    evaluations.append(eval_error)
+
+            # for evaluation_method in [roc_auc_score]:
+            #     y_proba = model.predict_proba(X_test)
+            #     for target in range(len(lb.classes_)):
+            #         eval_error = dict(fold_eval)
+            #         eval_error["method"] = evaluation_method.__name__ + "_class_" + str(lb.classes_[target])
+            #         eval_error["value"] = evaluation_method(y_test_binary[:, target], y_proba[:, target])
+            #         evaluations.append(eval_error)
+            for evaluation_method in [accuracy_score]: #,log_loss, f1_score]:
+                eval_error = dict(fold_eval)
+                eval_error["method"] = evaluation_method.__name__
+                #eval_error["value"] = evaluation_method(lb.transform(y_test_binary), lb.transform(y_preds_binary))
+                eval_error["value"] = evaluation_method(y_test_binary, y_preds_binary)
+                evaluations.append(eval_error)
 
             eval_values = pd.DataFrame()
-            eval_values['real'] = y_test
-            eval_values['prediction'] = y_preds
-            eval_values['regression_val'] = y_preds_val
-            eval_values['price'] = folds_price_test[f][t].values
+
+            eval_values['curr_price'] = price_test
+            eval_values['preds'] = y_preds_binary
+            eval_values['y'] = y_test_binary
+            #eval_values['curr_price2'] = folds_price_test[f][t].values
             for k1, v in fold_eval.items():
                 eval_values[k1] = v
             for profit_method in profit_methods:
                 eval_error = dict(fold_eval)
                 eval_error["method"] = profit_method.__name__
-                eval_error["value"], eval_values[profit_method.__name__] = profit_method(folds_price_test[f][t].values,y_preds)
+                eval_error["value"], eval_values[profit_method.__name__] = profit_method(price_test,y_preds_binary)
                 eval_error["sharp_ratio"] = np.mean(eval_values[profit_method.__name__]) / (np.std(eval_values[profit_method.__name__]) + 0.0001)
                 evaluations.append(eval_error)
+
             evaluations_values.append(eval_values)
     return pd.DataFrame(evaluations), pd.concat(evaluations_values)
 
@@ -766,10 +800,10 @@ def main():
         'window_len' : [10],#, 5, 20],
         'slide' : [1],#, 3, 5, 10],
         'preprocessing_pipeline' : [Pipeline([('minmax_normalize', MinMaxScaler())])],
-        'similarity_func' : [model_bases_distance(RandomForestRegressor(100,random_state = 0)), apply_pearson,apply_euclidean,apply_dtw],
-        'weighted_sampleing': [True, False],
+        'similarity_func' : [model_bases_distance(RandomForestRegressor(100,random_state = 0)), apply_euclidean,apply_dtw, apply_pearson],
+        'weighted_sampleing': [True],# False],
         'target_discretization' : [statistical_targeting],
-        'features_selection': [('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
+        'features_selection': [#('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
                      ('only_close', [u'Close']),
                      ('open_close_volume', [u'Open', u'Close', u'Volume'])]
     }
@@ -779,11 +813,10 @@ def main():
             'next_t': [1, 3, 7],
             'to_pivot': True,
             'models': [RandomForestClassifier, RandomForestRegressor,GradientBoostingRegressor,GradientBoostingClassifier],
-            'models_arg' : {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state' : 0},
-                            RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state' : 0},
-                            LogisticRegression.__name__: {},
-                            GradientBoostingClassifier.__name__: {'learning_rate': 0.02, 'random_state': 0},
-                            GradientBoostingRegressor.__name__: {'learning_rate': 0.02,'random_state' : 0}}
+            'models_arg' : {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state' : 0, 'random_state' : 0},
+                            RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state' : 0, 'random_state' : 0},
+                            GradientBoostingClassifier.__name__: {'learning_rate': 0.02, 'random_state': 0, 'random_state' : 0},
+                            GradientBoostingRegressor.__name__: {'learning_rate': 0.02,'random_state' : 0, 'random_state' : 0}}
         }
 
     experiments = get_index_product(experiment_params)
