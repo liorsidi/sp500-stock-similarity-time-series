@@ -98,7 +98,6 @@ def apply_euclidean(stock1, stock2):
 
 class model_bases_distance(object):
     def __init__(self, model):
-        #TODO save static model
         self.model = model
 
     def stock_norm_prep(self,stock_X):
@@ -285,6 +284,19 @@ def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window, t
            pd.DataFrame(Y_price)
 
 
+def preprocess_stock_data(stock_df, stock_name, preprocessing_pipeline,numeric_cols, to_fit = False):
+
+
+    stock_X_raw = stock_df[stock_df[ENTITY] == stock_name].reset_index(drop=True)
+    stock_X_raw_keep = stock_df[[ENTITY, TARGET]]
+    if to_fit:
+        preprocessing_pipeline.fit(stock_X_raw[numeric_cols])
+    stock_X_norm = preprocessing_pipeline.transform(stock_X_raw)
+    stock_X_norm_df = pd.DataFrame(stock_X_norm, columns=numeric_cols)
+    stock_X_prep = pd.merge(stock_X_raw_keep, stock_X_norm_df, left_index=True, right_index=True)
+    return stock_X_prep
+
+
 def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
                                            start_period_train, end_period_train, start_period_test, end_period_test,
                                            similarity_func, select_k_func, k, preprocessing_pipeline, experiment_path,
@@ -331,25 +343,31 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
     similarities = get_similarity(train_X_all_prev_periods, stock_to_compare, prev_stocks_names,
                                   similarity_func, experiment_path, split_time = str(end_period_train), force=force)
     top_stocks = select_k_func(prev_stocks_names, similarities, k)
+
     stocks_val = list(top_stocks.values())
     top_stock_w = {}
     for stock_k, v in top_stocks.items():
         if stock_k != stock_to_compare:
             top_stock_w[stock_k] = abs(float(v)-max(stocks_val)) / max(stocks_val)
-        else:
-            top_stock_w[stock_to_compare] = 1.0
+        # else:
+        #     top_stock_w[stock_to_compare] = 1.0
+
 
     numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
     numeric_cols = train_X.select_dtypes(include=numerics).columns.tolist()
     numeric_cols_prep = [s + "_prep" for s in numeric_cols]
 
-    ### prepare test only from the stock to compare
-    test_stock_X = test_X[test_X[ENTITY] == stock_to_compare].reset_index(drop=True)
-    test_stock_X_names_df = test_stock_X[[ENTITY, TARGET]]
-    test_stock_X_norm = preprocessing_pipeline.fit_transform(test_stock_X[numeric_cols])
-    test_stock_X_norm_df = pd.DataFrame(test_stock_X_norm, columns=numeric_cols_prep)
-    test_stock_X_prep = pd.merge(test_stock_X_names_df, test_stock_X_norm_df, left_index=True, right_index=True)
+    # prepare test only from the stock to compare
+    train_stock_X_prep = preprocess_stock_data(train_X, stock_to_compare, preprocessing_pipeline, numeric_cols_prep, to_fit=True)
+    stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_stock_X_prep,
+                                                                                          window_len, slide, next_t,
+                                                                                          numeric_cols_prep,
+                                                                                          to_pivot)
+    train_windows_x.append(stock_train_windows_x)
+    train_windows_y.append(stock_train_windows_y)
 
+    # apply preprocessing pipline on test
+    test_stock_X_prep = preprocess_stock_data(test_X, stock_to_compare, preprocessing_pipeline,numeric_cols_prep, to_fit = False)
     stock_test_windows_x, stock_test_windows_y, stock_prices_test = prepare_stock_windows(test_stock_X_prep,
                                                                                           window_len, slide, next_t,
                                                                                           numeric_cols_prep, to_pivot)
@@ -359,28 +377,21 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
 
     #prepare windows per stock
     for stock_name in top_stocks.keys():
-        train_stock_X = train_X[train_X[ENTITY] == stock_name].reset_index(drop = True)
-        train_stock_X_names_df = train_stock_X[[ENTITY, TARGET]]
-        train_stock_X_norm =  preprocessing_pipeline.fit_transform(train_stock_X[numeric_cols])
-        train_stock_X_norm_df = pd.DataFrame(train_stock_X_norm, columns=numeric_cols_prep)
-        train_stock_X_prep = pd.merge(train_stock_X_names_df, train_stock_X_norm_df, left_index=True, right_index=True)
+        train_stock_X_prep = preprocess_stock_data(train_X, stock_name, preprocessing_pipeline, numeric_cols_prep,
+                                                   to_fit=True)
+        stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_stock_X_prep,
+                                                                                window_len, slide, next_t,
+                                                                                numeric_cols_prep,
+                                                                                to_pivot)
 
-        stock_train_windows_x, stock_train_windows_y, stock_prices_train = prepare_stock_windows(train_stock_X_prep,
-                                                                                                 window_len, slide,
-                                                                                                 next_t,
-                                                                                                 numeric_cols_prep,to_pivot)
-
-        stock_train_windows_x_s = stock_train_windows_x
-        stock_train_windows_y_s = stock_train_windows_y
         if weighted_sampleing:
-            #_, _, stock_train_windows_x_s, stock_train_windows_y_s = train_test_split(stock_train_windows_x, stock_train_windows_y, test_size = top_stock_w[stock_name], random_state = 42)
             np.random.seed(0)
             msk = np.random.rand(len(stock_train_windows_x)) < top_stock_w[stock_name]
-            stock_train_windows_x_s = stock_train_windows_x[msk]
-            stock_train_windows_y_s = stock_train_windows_y[msk]
+            stock_train_windows_x = stock_train_windows_x[msk]
+            stock_train_windows_y = stock_train_windows_y[msk]
 
-        train_windows_x.append(stock_train_windows_x_s)
-        train_windows_y.append(stock_train_windows_y_s)
+        train_windows_x.append(stock_train_windows_x)
+        train_windows_y.append(stock_train_windows_y)
 
     return pd.concat(train_windows_x), pd.concat(train_windows_y),\
            pd.concat(test_windows_x), pd.concat(test_windows_y), pd.concat(test_price),\
@@ -790,6 +801,7 @@ def run_experiment(data_period, stock_to_compare, preprocessing_pipeline,feature
 
 
 def main():
+    #regular experiment
     experiment_params = {
         'data_period': ['1yr'],
         'n_folds' : [6],
@@ -801,7 +813,7 @@ def main():
         'slide' : [1],#, 3, 5, 10],
         'preprocessing_pipeline' : [Pipeline([('minmax_normalize', MinMaxScaler())])],
         'similarity_func' : [model_bases_distance(RandomForestRegressor(100,random_state = 0)), apply_euclidean,apply_dtw, apply_pearson],
-        'weighted_sampleing': [True],# False],
+        'weighted_sampleing': [True, False],
         'target_discretization' : [statistical_targeting],
         'features_selection': [#('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
                      ('only_close', [u'Close']),
@@ -825,20 +837,45 @@ def main():
         experiment.update(experiment_static_params)
         run_experiment(**experiment)
 
-    experiment_static_params = \
-        {
-            'next_t': [1, 3, 7],
-            'to_pivot': False
-           # 'models': [LSTM_stock],
-            #'models_arg': {LSTM_stock.__name__: {},
-                           #}
-        }
+    # Sax
+    experiment_params = {
+        'data_period': ['1yr'],
+        'n_folds' : [6],
+        # tech, finance, service, health, consumer, Industrial
+        'stock_to_compare' : ["GOOGL"], #, "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
+        'k' : [10, 1 , 25],
+        'select_k_func' : [get_top_k, get_random_k],
+        'window_len' : [10],#, 5, 20],
+        'slide' : [1],#, 3, 5, 10],
+        'preprocessing_pipeline' : [Pipeline([('sax', SaxDiscretisize())])],
+        'similarity_func' : [apply_saxdistance],
+        'weighted_sampleing': [True, False],
+        'target_discretization' : [statistical_targeting],
+        'features_selection': [#('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
+                     ('only_close', [u'Close']),
+                     ('open_close_volume', [u'Open', u'Close', u'Volume'])]
+    }
 
     experiments = get_index_product(experiment_params)
     for experiment in experiments:
         print "run experiment: " + str(experiment)
         experiment.update(experiment_static_params)
+        run_experiment(**experiment)
 
+    # experiment_static_params = \
+    #     {
+    #         'next_t': [1, 3, 7],
+    #         'to_pivot': False
+    #        # 'models': [LSTM_stock],
+    #         #'models_arg': {LSTM_stock.__name__: {},
+    #                        #}
+    #     }
+    #
+    # experiments = get_index_product(experiment_params)
+    # for experiment in experiments:
+    #     print "run experiment: " + str(experiment)
+    #     experiment.update(experiment_static_params)
+    #
         #run_experiment(**experiment)
 
 main()
