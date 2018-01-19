@@ -240,8 +240,9 @@ def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window, t
     if not to_pivot:
         stock_name = stock_X[ENTITY].unique()[0]
         X_stocks_windows = {}
+    y = np.array(stock_X[TARGET + "_prep"].tolist())
     while i < len(stock_X[ENTITY]) - window_len - max(next_t):
-        y_ti = i + window_len + np.asarray(next_t)
+        y_ti = i + window_len  - 1  + np.asarray(next_t)
         stock_X_window = stock_X[i:i + window_len]
         stock_X_window.insert(0, 't', range(window_len))
         window_time = stock_X_window.index.values[-1]
@@ -253,7 +254,7 @@ def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window, t
             stock_X_window_df = stock_X_window[column_to_window]
             X_stocks_windows[stock_name + str(i)] = window_time
 
-        next_y = np.array(stock_X[TARGET + "_prep"].tolist())[y_ti]
+        next_y = y[y_ti]
         y_vals = next_y.tolist()
         y_ = {}
         for c in range(len(y_column_names)):
