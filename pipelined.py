@@ -126,7 +126,6 @@ class model_bases_distance(object):
         :param stock2:
         :return:
         """
-        print len(stock_X)
         stock_X_prep = self.stock_norm_prep(stock_X)
         x, y, _ = prepare_stock_windows(stock_X_prep, 10, 1, [1], [TARGET + '_prep'])
 
@@ -245,25 +244,27 @@ def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window, t
         y_ti = i + window_len + np.asarray(next_t)
         stock_X_window = stock_X[i:i + window_len]
         stock_X_window.insert(0, 't', range(window_len))
+        window_time = stock_X_window.index.values[-1]
         if to_pivot:
             stock_X_window_flat = stock_X_window[column_to_window + [ENTITY] + ['t']].pivot(index = ENTITY,columns = 't').iloc[0].to_dict()
-            stock_X_window_flat[TIME] = i
+            stock_X_window_flat[TIME] = window_time
             X_stocks_windows.append(stock_X_window_flat)
         else:
             stock_X_window_df = stock_X_window[column_to_window]
-            X_stocks_windows[stock_name + str(i)] = stock_X_window_df
+            X_stocks_windows[stock_name + str(i)] = window_time
 
         next_y = np.array(stock_X[TARGET + "_prep"].tolist())[y_ti]
         y_vals = next_y.tolist()
         y_ = {}
         for c in range(len(y_column_names)):
             y_[str(y_column_names[c])] = y_vals[c]
+        y_[TIME] = window_time
         Y_.append(y_)
 
         #the current window last price
         y_price = {}
         y_price[TARGET] = np.array(stock_X[TARGET].tolist())[i + window_len].tolist()
-        y_price[TIME] = i
+        y_price[TIME] = window_time
         Y_price.append(y_price)
 
         # next_price = np.array(stock_X[TARGET].tolist())[y_ti]
@@ -276,25 +277,28 @@ def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window, t
 
         i += slide
     if to_pivot:
-        X = pd.DataFrame.from_records(X_stocks_windows, index=[TIME])
+        X = pd.DataFrame.from_records(X_stocks_windows)
     else:
         X = pd.concat(X_stocks_windows)
-    return X ,\
-           pd.DataFrame(Y_),\
-           pd.DataFrame(Y_price)
+    return X.set_index(TIME) ,\
+           pd.DataFrame(Y_).set_index(TIME),\
+           pd.DataFrame(Y_price).set_index(TIME)
 
 
 def preprocess_stock_data(stock_df, stock_name, preprocessing_pipeline,numeric_cols, to_fit = False):
-
-
-    stock_X_raw = stock_df[stock_df[ENTITY] == stock_name].reset_index(drop=True)
-    stock_X_raw_keep = stock_df[[ENTITY, TARGET]]
+    stock_X_raw = stock_df[stock_df[ENTITY] == stock_name].set_index(TIME)
+    stock_X_raw_keep = stock_X_raw[[ENTITY, TARGET]]
+    stock_X_process = stock_X_raw[numeric_cols]
+    #stock_X_norm = stock_df[numeric_cols].reset_index(drop=True)
     if to_fit:
-        preprocessing_pipeline.fit(stock_X_raw[numeric_cols])
-    stock_X_norm = preprocessing_pipeline.transform(stock_X_raw)
-    stock_X_norm_df = pd.DataFrame(stock_X_norm, columns=numeric_cols)
+        preprocessing_pipeline.fit(stock_X_process)
+    stock_X_norm = preprocessing_pipeline.transform(stock_X_process)
+    numeric_cols_prep = [s + "_prep" for s in numeric_cols]
+    stock_X_norm_df = pd.DataFrame(stock_X_norm, columns=numeric_cols_prep)
+    stock_X_norm_df[TIME] = stock_X_process.index
+    stock_X_norm_df = stock_X_norm_df.set_index(TIME)
     stock_X_prep = pd.merge(stock_X_raw_keep, stock_X_norm_df, left_index=True, right_index=True)
-    return stock_X_prep
+    return stock_X_prep, numeric_cols_prep
 
 
 def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
@@ -332,8 +336,8 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
     train_X = df_stocks[(start_period_train <= df_stocks[TIME]) & (df_stocks[TIME] < end_period_train)]
     test_X = df_stocks[(start_period_test <= df_stocks[TIME]) & (df_stocks[TIME] < end_period_test)]
 
-    del train_X[TIME]
-    del test_X[TIME]
+    # del train_X[TIME]
+    # del test_X[TIME]
 
     train_windows_x, train_windows_y, train_price, test_windows_x, test_windows_y, test_price = [], [], [], [], [],[]
 
@@ -355,10 +359,10 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
 
     numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
     numeric_cols = train_X.select_dtypes(include=numerics).columns.tolist()
-    numeric_cols_prep = [s + "_prep" for s in numeric_cols]
+
 
     # prepare test only from the stock to compare
-    train_stock_X_prep = preprocess_stock_data(train_X, stock_to_compare, preprocessing_pipeline, numeric_cols_prep, to_fit=True)
+    train_stock_X_prep, numeric_cols_prep = preprocess_stock_data(train_X, stock_to_compare, preprocessing_pipeline, numeric_cols, to_fit=True)
     stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_stock_X_prep,
                                                                                           window_len, slide, next_t,
                                                                                           numeric_cols_prep,
@@ -367,7 +371,7 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
     train_windows_y.append(stock_train_windows_y)
 
     # apply preprocessing pipline on test
-    test_stock_X_prep = preprocess_stock_data(test_X, stock_to_compare, preprocessing_pipeline,numeric_cols_prep, to_fit = False)
+    test_stock_X_prep, _ = preprocess_stock_data(test_X, stock_to_compare, preprocessing_pipeline,numeric_cols, to_fit = False)
     stock_test_windows_x, stock_test_windows_y, stock_prices_test = prepare_stock_windows(test_stock_X_prep,
                                                                                           window_len, slide, next_t,
                                                                                           numeric_cols_prep, to_pivot)
@@ -376,8 +380,8 @@ def prepare_rolling_periods_for_top_stocks(df_stocks, stock_to_compare,
     test_price.append(stock_prices_test)
 
     #prepare windows per stock
-    for stock_name in top_stocks.keys():
-        train_stock_X_prep = preprocess_stock_data(train_X, stock_name, preprocessing_pipeline, numeric_cols_prep,
+    for stock_name in top_stock_w.keys():
+        train_stock_X_prep, _ = preprocess_stock_data(train_X, stock_name, preprocessing_pipeline, numeric_cols,
                                                    to_fit=True)
         stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_stock_X_prep,
                                                                                 window_len, slide, next_t,
@@ -808,16 +812,16 @@ def main():
         # tech, finance, service, health, consumer, Industrial
         'stock_to_compare' : ["GOOGL"], #, "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
         'k' : [10, 1 , 25],
-        'select_k_func' : [get_top_k, get_random_k],
+        'select_k_func' : [get_top_k],#, get_random_k],
         'window_len' : [10],#, 5, 20],
         'slide' : [1],#, 3, 5, 10],
         'preprocessing_pipeline' : [Pipeline([('minmax_normalize', MinMaxScaler())])],
-        'similarity_func' : [model_bases_distance(RandomForestRegressor(100,random_state = 0)), apply_euclidean,apply_dtw, apply_pearson],
+        'similarity_func' : [model_bases_distance(RandomForestRegressor(100,random_state = 0))],#, apply_euclidean,apply_dtw, apply_pearson],
         'weighted_sampleing': [True, False],
-        'target_discretization' : [statistical_targeting],
+        'target_discretization' : [diffrence_targeting],
         'features_selection': [#('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
-                     ('only_close', [u'Close']),
-                     ('open_close_volume', [u'Open', u'Close', u'Volume'])]
+                     ('only_close', [u'Close'])]
+                     #('open_close_volume', [u'Open', u'Close', u'Volume'])]
     }
 
     experiment_static_params = \
@@ -825,10 +829,10 @@ def main():
             'next_t': [1, 3, 7],
             'to_pivot': True,
             'models': [RandomForestClassifier, RandomForestRegressor,GradientBoostingRegressor,GradientBoostingClassifier],
-            'models_arg' : {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state' : 0, 'random_state' : 0},
-                            RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state' : 0, 'random_state' : 0},
-                            GradientBoostingClassifier.__name__: {'learning_rate': 0.02, 'random_state': 0, 'random_state' : 0},
-                            GradientBoostingRegressor.__name__: {'learning_rate': 0.02,'random_state' : 0, 'random_state' : 0}}
+            'models_arg' : {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state' : 0},
+                            RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state' : 0},
+                            GradientBoostingClassifier.__name__: {'learning_rate': 0.02, 'random_state': 0},
+                            GradientBoostingRegressor.__name__: {'learning_rate': 0.02,'random_state' : 0}}
         }
 
     experiments = get_index_product(experiment_params)
