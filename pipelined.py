@@ -424,7 +424,7 @@ def prepare_rolling_periods_for_top_stocks(data_period, stock_to_compare,
     count_stock = train_X_all_prev_periods.groupby([ENTITY]).count()[TIME].reset_index()
     prev_stocks_names = count_stock[count_stock[TIME] > window_len][ENTITY].tolist()
 
-    file_name = "fold-before_" + str(str(end_period_train))
+    file_name = "before_" + str(str(end_period_train))
     #calculate_features for all stocks
     data_file_path = os.path.join(data_path, file_name )
     all_stocks_processed_df, features_names = calculate_features_all_stocks(data_file_path, features_selection, finance_features, force, normalization, prev_stocks_names,
@@ -733,7 +733,9 @@ def save_evaluations(evaluations, results_path, folds_topk, processing_params,wi
     for model_i in range(len(evaluations)):
         model_eval_df = evaluations[model_i][0]
         model_values_eval = evaluations[model_i][1]
-        for k1,v1 in model_params.items:
+        for k1,v1 in model_params.items():
+            if isinstance(v1,tuple):
+                v1 = v1[0]
             model_eval_df[k1] = v1
             model_values_eval[k1] = v1
         model_evals.append(model_eval_df)
@@ -782,9 +784,9 @@ def run_experiment(data_period, stock_to_compare,n_folds,features_selection,fina
     """
 
     experiment_path = os.path.join(home_path, 'experiments', data_period + "_folds-" + str(n_folds), stock_to_compare)
-    data_path = os.path.join(experiment_path,'data', 'fs-' +features_selection[0] + 'finance_fe-' + str(finance_features) + "_norm-" + normalization
-                                        + "_transform-" + transformation )
-    similarity_path = os.path.join(experiment_path,'similarity', 'func-' +similarity_func.__name__ + '_col-' + similarity_col )
+    data_path = os.path.join(experiment_path,'data', 'fs-' +features_selection[0] + '_finance_fe-' + str(finance_features) + "_norm-" + normalization
+                                        + "_transform-" + transformation,'fold-')
+    similarity_path = os.path.join(experiment_path,'similarity', 'func-' +similarity_func + '_col-' + similarity_col,'fold-' )
     if not os.path.exists(os.path.dirname(experiment_path)):
         os.makedirs(experiment_path)
     if not os.path.exists(os.path.dirname(data_path)):
@@ -796,8 +798,8 @@ def run_experiment(data_period, stock_to_compare,n_folds,features_selection,fina
 
     # preapare data with slide, time window as fold -> test + train X features + targets
     folds_loaded, folds_topk,features_names = prepare_folds(df_stocks, stock_to_compare,n_folds,features_selection,finance_features,
-                                                            normalizations[normalization],transformations[transformation],to_pivot,k,select_k_func,similarity_col,
-                                             similarity_func,window_len,slide,weighted_sampleing,y_col,next_t,
+                                                            normalizations[normalization],transformations[transformation],to_pivot,k,select_k_funcs[select_k_func],similarity_col,
+                                             similarity_funcs[similarity_func],window_len,slide,weighted_sampleing,y_col,next_t,
                                              data_path, similarity_path, force)
 
     folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test = \
@@ -822,8 +824,8 @@ def run_experiment(data_period, stock_to_compare,n_folds,features_selection,fina
     windowing_params = {'window_len': window_len,
                          'slide': slide,
                          'weighted_sampleing' : weighted_sampleing,
-                         'y_col' : y_col,
-                         'next_t' : next_t}
+                         'y_col' : y_col}
+                         #'next_t' : next_t}
 
     save_evaluations(evaluations, experiment_path, folds_topk, processing_params,windowing_params)
     return experiment_path
@@ -834,26 +836,35 @@ transformations  = {'None' : None,
                     'PCA' : PCA()}
 normalizations  = {'Standard' : StandardScaler()}
 
+select_k_funcs  = {'get_random_k' : get_random_k,
+                    'get_top_k': get_top_k}
+
+similarity_funcs = {'sax' : compare_sax,
+                    'model_based_RF': model_bases_distance(RandomForestRegressor(100, random_state=0)),
+                    'euclidean' : apply_euclidean,
+                    'dtw' : apply_dtw,
+                    'pearson' : apply_pearson
+                    }
 def main():
 
     #regular experiment
     experiment_params = {
-        'data_period': ['1yr'],
+        'data_period': ['5yr'],
         # tech, finance, service, health, consumer, Industrial
-        'stock_to_compare': ["GOOGL"],  # , "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
+        'stock_to_compare': ["GOOGL", "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
         'n_folds': [6],
         'features_selection': [ ('only_close', [u'Close'])],
         # ('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
         # ('open_close_volume', [u'Open', u'Close', u'Volume'])]
-        'finance_features': [True, False],
+        'finance_features': [True],#, False],
         'normalization': ['Standard'],
-        'transformation': ['None', 'SAX', 'PCA'],
-        'k': [10],
-        'select_k_func': [get_top_k],#, get_random_k],
+        'transformation': ['None'],# 'SAX', 'PCA'],
+        'k': [0],#,10,25],
+        'select_k_func': ['get_top_k'],#, 'get_random_k'],
         'similarity_col': ['Close'],
-        'similarity_func': [compare_sax],
+        'similarity_func': ['sax'],
                             #model_bases_distance(RandomForestRegressor(100, random_state=0)), apply_euclidean,apply_dtw, apply_pearson],
-        'window_len': [10],  # , 0, 20],
+        'window_len': [1,10],  # , 0, 20],
         'slide': [1],  # , 3, 5, 10],
         'weighted_sampleing': [False],  # True],
         'y_col': ['Close'],
