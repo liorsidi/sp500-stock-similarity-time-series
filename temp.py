@@ -1,6 +1,5 @@
 import random
 
-from datetime import datetime
 import pandas as pd
 import numpy as np
 import os
@@ -31,7 +30,7 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils import resample
 
-from Financial_FE import rsiFunc, computeMACD
+from Financial_FE import Financial_FE, rsiFunc, computeMACD
 
 home_path = 'C:\\Users\\Lior\\StockSimilarity'
 
@@ -39,7 +38,6 @@ TIME = 'Date'
 ENTITY = 'Name'
 TARGET = 'Close'
 FEATURES = ['Close']
-TARGET_PREP = 'traget_prep'
 
 from SAX_FILE import SAX
 sax_obj = SAX()
@@ -49,7 +47,7 @@ def get_data(data_period):
     all_stocks = pd.read_csv(file_path)
     all_stocks[TIME] = pd.to_datetime(all_stocks[TIME], format='%Y%m%d', errors='ignore')
     all_stocks = all_stocks.dropna(axis=0)
-    all_stocks= all_stocks.set_index(TIME,drop=False)
+    all_stocks= all_stocks.set_index(TIME)
     return all_stocks
 
 
@@ -155,7 +153,7 @@ def compare_sax(stock1, stock2):
 
 
 
-def calculate_similarity_all_stocks(df_stocks, stock_to_compare, stock_names, similarity_func, similarity_file_path, force = False, split_time ="", y_col ='Close'):
+def get_similarity(df_stocks, stock_to_compare, stock_names, similarity_func, experiment_path, force = False, split_time = "", y_col = 'Close'):
     """
     claculate similarities between target stock to the otherts using a similarity function,
     save the similarities on disk
@@ -170,7 +168,10 @@ def calculate_similarity_all_stocks(df_stocks, stock_to_compare, stock_names, si
     :return: list of similarities between the target stoack and the other in the same order of the stock_names list
     """
     print "calc similarities"
-    if (not os.path.isfile(similarity_file_path)) or force:
+    file_name = "similarities_" + stock_to_compare + "_" + similarity_func.__name__ + "split_" + str(split_time) + ".pkl"
+    similarities_path = os.path.join(experiment_path, file_name)
+
+    if (not os.path.isfile(similarities_path)) or force:
         if isinstance(similarity_func, model_bases_distance):
             stock_X = df_stocks[df_stocks[ENTITY] == stock_to_compare]
             similarity_func.fit(stock_X)
@@ -184,12 +185,11 @@ def calculate_similarity_all_stocks(df_stocks, stock_to_compare, stock_names, si
                               df_stocks[df_stocks[ENTITY] == stock_name][y_col].tolist())
                     for stock_name in stock_names
                     ]
-        with open(similarity_file_path, 'wb') as f:
+        with open(similarities_path, 'wb') as f:
             pickle.dump(similarities, f)
-    with open(similarity_file_path, 'rb') as f:
+    with open(similarities_path, 'rb') as f:
         similarities = pickle.load(f)
     return similarities
-
 
 
 def get_top_k(stock_names, similarities, k):
@@ -236,7 +236,7 @@ def get_random_k(stock_names, similarities, k):
 
 
 ##################  Data preparation for Time Series #################
-def prepare_stock_windows(stock_X, features_names, window_len, slide, next_t, to_pivot= True, y_col = 'Close'):
+def prepare_stock_windows(stock_X, window_len, slide, next_t,column_to_window, to_pivot= True, y_col = 'Close'):
     """
     prepare stock data for classifcation as follows: each window of series data is an instance, the instances are computed in sliding window manner,
     for each instance a next future targets values are computed
@@ -256,21 +256,19 @@ def prepare_stock_windows(stock_X, features_names, window_len, slide, next_t, to
     if not to_pivot:
         stock_name = stock_X[ENTITY].unique()[0]
         X_stocks_windows = {}
-    y = np.array(stock_X[TARGET_PREP].tolist()) #TODO chande to y_col for generic y
-
+    y = np.array(stock_X[y_col].tolist())
     while i < len(stock_X[ENTITY]) - window_len - max(next_t):
         y_ti = i + window_len  - 1  + np.asarray(next_t)
         stock_X_window = stock_X[i:i + window_len]
         stock_X_window.insert(0, 't', range(window_len))
         window_time = stock_X_window.index.values[-1]
         if to_pivot:
-            stock_X_window_flat = stock_X_window[features_names + [ENTITY] + ['t']].pivot(index = ENTITY,columns = 't')#.iloc[0].to_dict()
-            stock_X_window_flat = stock_X_window_flat.iloc[0].to_dict()
+            stock_X_window_flat = stock_X_window[column_to_window + [ENTITY] + ['t']].pivot(index = ENTITY,columns = 't').iloc[0].to_dict()
             stock_X_window_flat[TIME] = window_time
             X_stocks_windows.append(stock_X_window_flat)
-        # else:
-        #     stock_X_window_df = stock_X_window[features_names]
-        #     X_stocks_windows[stock_name + str(i)] = window_time
+        else:
+            stock_X_window_df = stock_X_window[column_to_window]
+            X_stocks_windows[stock_name + str(i)] = window_time
 
         next_y = y[y_ti]
         y_vals = next_y.tolist()
@@ -312,83 +310,35 @@ def combine_df(data, name, cols_names, idx_name,idx_col):
     return data_df
 
 
-def preprocess_stock_features(stocks_df, stock_name,features_selection, finance_features, normalization, transformation,y_col, to_fit = True):
-    numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
-    features = [fe for fe in features_selection[1]]
-    selected_numeric_cols = stocks_df[features].select_dtypes(include=numerics).columns.tolist()
-
-    stock_X_raw = stocks_df[stocks_df[ENTITY] == stock_name]
-
-    if y_col in selected_numeric_cols:
-        stock_X_raw_keep = stock_X_raw[[ENTITY]]
-    else:
-        stock_X_raw_keep = stock_X_raw[[ENTITY, y_col]]
-    stock_X = stock_X_raw[selected_numeric_cols]  # TODO check id still index
-    stock_X_prep = [stock_X]
-    if finance_features:
-        stock_X_finance = stock_X.pct_change()
-        stock_X_finance.iloc[0] = 0
-        stock_X_finance_df = combine_df(stock_X_finance.values, "_proc", stock_X.columns, TIME, stock_X.index)
-        stock_X_finance_df['rsi'] = rsiFunc(stock_X[TARGET])
-        stock_X_finance_df['MACD'] = computeMACD(stock_X[TARGET])[2]
-        stock_X_prep.append(stock_X_finance_df)
-
+def preprocess_stock_data(stock_df, stock_name, preprocessing_pipeline,numeric_cols, to_fit = False ,finance_features = True):
+    stock_X_raw = stock_df[stock_df[ENTITY] == stock_name].set_index(TIME)
+    stock_X_raw_keep = stock_X_raw[[ENTITY, TARGET]]
+    stock_X_process = stock_X_raw[numeric_cols]
+    #stock_X_norm = stock_df[numeric_cols].reset_index(drop=True)
     if to_fit:
-        normalization.fit(stock_X)
-    stock_X_norm = normalization.transform(stock_X)
-    stock_X_norm_df = combine_df(stock_X_norm, "_norm", stock_X.columns, TIME, stock_X.index)
-    if y_col in stock_X.columns:
-        stock_X_norm_df = stock_X_norm_df.rename(columns={y_col + "_norm": TARGET_PREP})
-    else:
-        raise "target column not in data will error in evaluation"
+        preprocessing_pipeline.fit(stock_X_process)
 
-    stock_X_prep.append(stock_X_norm_df)
+    stock_X_norm = preprocessing_pipeline.transform(stock_X_process)
+    stock_X_norm_df = combine_df(stock_X_norm, "_norm", numeric_cols, TIME, stock_X_process.index)
+    numeric_cols_prep = stock_X_norm_df.columns
+    stock_X_prep = pd.merge(stock_X_raw_keep, stock_X_norm_df, left_index=True, right_index=True)
 
-    if len(stock_X_prep) > 1:
-        stock_X_prep_df = reduce(lambda x, y: pd.merge(x, y, left_index=True, right_index=True), stock_X_prep)
-    else:
-        stock_X_prep_df = stock_X
+    if finance_features:
+        stock_X_proc = stock_X_norm_df.pct_change()
+        stock_X_finance = combine_df(stock_X_proc,"_proc",numeric_cols,TIME, stock_X_process.index )
+        stock_X_finance['rsi'] = rsiFunc(stock_X_norm_df[TARGET])
+        stock_X_finance['MACD'] = computeMACD(stock_X_norm_df[TARGET])
+        numeric_cols_prep += stock_X_finance.columns
+        stock_X_prep = pd.merge(stock_X_prep, stock_X_finance, left_index=True, right_index=True)
 
-    if transformation is not None:
-        if to_fit:
-            transformation.fit(stock_X_prep_df)
-        stock_X_transform = normalization.transform(stock_X_prep_df)
-        stock_X_norm_df = combine_df(stock_X_transform, "_transform", stock_X_prep_df.columns, TIME, stock_X.index)
-        stock_X_prep_df = pd.merge(stock_X_prep_df, stock_X_norm_df, left_index=True, right_index=True)
-
-    features_names = stock_X_prep_df.columns
-    stock_X_prep_df = pd.merge(stock_X_raw_keep, stock_X_prep_df, left_index=True, right_index=True)
-    return stock_X_prep_df, normalization, transformation, features_names
-
-
-def calculate_features_all_stocks(path, features_selection, finance_features, force, normalization, prev_stocks_names,
-                                  train_X, transformation, y_col):
-    print "calc features all stocks"
-    features_names_file_path = path + 'features_names.pkl'
-    data_file_path = path + 'stocks_processed.csv'
-
-    if (not os.path.isfile(data_file_path)) or force:
-        all_stocks_processed = []
-        features_names = []
-        for stock in prev_stocks_names:
-            train_stock_X, _, _, features_names = preprocess_stock_features(train_X, stock,features_selection, finance_features, normalization, transformation,y_col,)
-            all_stocks_processed.append(train_stock_X)
-        all_stocks_processed_df = pd.concat(all_stocks_processed)
-        all_stocks_processed_df.to_csv(data_file_path)
-        with open(features_names_file_path, 'wb') as f:
-            pickle.dump(features_names.tolist(), f)
-    with open(features_names_file_path, 'rb') as f:
-        features_names = pickle.load(f)
-    all_stocks_processed_df = pd.read_csv(data_file_path)
-    return all_stocks_processed_df, features_names
-
+    return stock_X_prep, numeric_cols_prep
 
 
 def prepare_rolling_periods_for_top_stocks(data_period, stock_to_compare,
                                            start_period_train, end_period_train, start_period_test, end_period_test,
                                            features_selection, finance_features, normalization, transformation, to_pivot, \
                                            k, select_k_func, similarity_col, similarity_func, window_len, slide, weighted_sampleing, y_col, next_t,
-                                           data_path, similarity_path, force):
+                                           experiment_path, force):
     """
     split the data to train period and evaluation period, the entire preprocessing parameters are computed seperatly
      per k neareast stock on the train period and then applied also on the evaluation period,
@@ -420,73 +370,75 @@ def prepare_rolling_periods_for_top_stocks(data_period, stock_to_compare,
     train_X = data_period[(start_period_train <= data_period[TIME]) & (data_period[TIME] < end_period_train)]
     test_X = data_period[(start_period_test <= data_period[TIME]) & (data_period[TIME] < end_period_test)]
 
+    # del train_X[TIME]
+    # del test_X[TIME]
+
+    train_windows_x, train_windows_y, train_price, test_windows_x, test_windows_y, test_price = [], [], [], [], [],[]
+
     #calc similar stock on all previous data with atleast window len amount of recoeds
     count_stock = train_X_all_prev_periods.groupby([ENTITY]).count()[TIME].reset_index()
     prev_stocks_names = count_stock[count_stock[TIME] > window_len][ENTITY].tolist()
 
-    file_name = "fold-before_" + str(str(end_period_train))
-    #calculate_features for all stocks
-    data_file_path = os.path.join(data_path, file_name )
-    all_stocks_processed_df, features_names = calculate_features_all_stocks(data_file_path, features_selection, finance_features, force, normalization, prev_stocks_names,
-                                                            train_X, transformation, y_col)
-
-    #calculate_similarity
-    similarity_file_path = os.path.join(similarity_path, file_name + ".pkl")
-    similarities = calculate_similarity_all_stocks(train_X_all_prev_periods, stock_to_compare, prev_stocks_names,
-                                                   similarity_func, similarity_file_path, split_time = str(end_period_train), force=force, y_col = similarity_col)
+    similarities = get_similarity(train_X_all_prev_periods, stock_to_compare, prev_stocks_names,
+                                  similarity_func, experiment_path, split_time = str(end_period_train), force=force, similarity_col = similarity_col)
     top_stocks = select_k_func(prev_stocks_names, similarities, k)
-    #normalize similarity
+
     stocks_val = list(top_stocks.values())
     top_stock_w = {}
     for stock_k, v in top_stocks.items():
         if stock_k != stock_to_compare:
             top_stock_w[stock_k] = abs(float(v)-max(stocks_val)) / max(stocks_val)
+        # else:
+        #     top_stock_w[stock_to_compare] = 1.0
 
-    train_windows_x, train_windows_y, train_price, test_windows_x, test_windows_y, test_price = [], [], [], [], [], []
 
-    # prepare train
-    train_stock_to_compare_X, normalization_f, transformation_f,_ = preprocess_stock_features(train_X,stock_to_compare ,
-                                                                                   features_selection, finance_features,
-                                                                                   normalization, transformation, y_col)
-    stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_stock_to_compare_X,features_names, window_len, slide, next_t,
-                                                                            to_pivot, y_col)
+    numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
+    numeric_cols = train_X.select_dtypes(include=numerics).columns.tolist()
+
+
+    # prepare test only from the stock to compare
+    train_stock_X_prep, numeric_cols_prep = preprocess_stock_data(train_X, stock_to_compare, preprocessing_pipeline, numeric_cols, to_fit=True, finance_features = finance_features)
+    stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_stock_X_prep,
+                                                                                          window_len, slide, next_t,
+                                                                                          numeric_cols_prep,
+                                                                                          to_pivot,y_col)
     train_windows_x.append(stock_train_windows_x)
     train_windows_y.append(stock_train_windows_y)
 
-    # prepare test
-    test_stock_to_compare_X, _, _, _ = preprocess_stock_features(test_X, stock_to_compare, features_selection,
-                                                     finance_features, normalization_f,
-                                                     transformation_f, y_col,to_fit=False)
-
-    stock_test_windows_x, stock_test_windows_y, stock_prices_test = prepare_stock_windows(test_stock_to_compare_X,features_names,
+    # apply preprocessing pipline on test
+    test_stock_X_prep, _ = preprocess_stock_data(test_X, stock_to_compare, preprocessing_pipeline,numeric_cols, to_fit = False,finance_features = finance_features)
+    stock_test_windows_x, stock_test_windows_y, stock_prices_test = prepare_stock_windows(test_stock_X_prep,
                                                                                           window_len, slide, next_t,
-                                                                                          to_pivot, y_col)
+                                                                                          numeric_cols_prep, to_pivot, y_col)
     test_windows_x.append(stock_test_windows_x)
     test_windows_y.append(stock_test_windows_y)
     test_price.append(stock_prices_test)
 
     #prepare windows per stock
     for stock_name in top_stock_w.keys():
-        stock_X = all_stocks_processed_df[all_stocks_processed_df[ENTITY] == stock_name]
-        stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(stock_X,features_names, window_len, slide,
-                                                                                next_t,
+        train_stock_X_prep, _ = preprocess_stock_data(train_X, stock_name, preprocessing_pipeline, numeric_cols,
+                                                   to_fit=True,finance_features = finance_features)
+        stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_stock_X_prep,
+                                                                                window_len, slide, next_t,
+                                                                                numeric_cols_prep,
                                                                                 to_pivot, y_col)
+
         if weighted_sampleing:
             np.random.seed(0)
             msk = np.random.rand(len(stock_train_windows_x)) < top_stock_w[stock_name]
             stock_train_windows_x = stock_train_windows_x[msk]
             stock_train_windows_y = stock_train_windows_y[msk]
+
         train_windows_x.append(stock_train_windows_x)
         train_windows_y.append(stock_train_windows_y)
 
     return pd.concat(train_windows_x), pd.concat(train_windows_y),\
            pd.concat(test_windows_x), pd.concat(test_windows_y), pd.concat(test_price),\
-           top_stocks, features_names
-
+           top_stocks
 
 
 def prepare_folds(data_period, stock_to_compare,n_folds,features_selection,finance_features,normalization,transformation,to_pivot,\
-    k,select_k_func,similarity_col, similarity_func,window_len,slide,weighted_sampleing,y_col,next_t, data_path, similarity_path , force):
+    k,select_k_func,similarity_col, similarity_func,window_len,slide,weighted_sampleing,y_col,next_t, experiment_path, force):
     """
     prepare a rolling folds evaluations
     :param df_stocks:
@@ -507,8 +459,13 @@ def prepare_folds(data_period, stock_to_compare,n_folds,features_selection,finan
     print "preparing folds"
     stock_times = data_period[data_period[ENTITY] == stock_to_compare][TIME].tolist()
     period_len = int(abs(len(stock_times)/n_folds))
-    folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test, folds_topk = [], [], [], [], [], []
+    folds_X_train = []
+    folds_Y_train = []
 
+    folds_X_test = []
+    folds_Y_test = []
+    folds_price_test = []
+    folds_topk = []
     # for each fold
     for f in range(n_folds-1):
         # define rolling times by the tagets period
@@ -522,18 +479,53 @@ def prepare_folds(data_period, stock_to_compare,n_folds,features_selection,finan
 
         train_windows_x, train_windows_y,\
         test_windows_x, test_windows_y, test_price,\
-        top_stocks, features_names = \
+        top_stocks = \
             prepare_rolling_periods_for_top_stocks(data_period, stock_to_compare,
                                                    start_period_train, end_period_train, start_period_test, end_period_test,
                                                    features_selection, finance_features, normalization, transformation, to_pivot, \
                                                    k, select_k_func, similarity_col, similarity_func, window_len, slide, weighted_sampleing, y_col, next_t
-                                                   , data_path, similarity_path , force)
+                                                   , experiment_path, force)
 
-        folds_X_train.append(train_windows_x), folds_Y_train.append(train_windows_y), folds_X_test.append(test_windows_x)
-        folds_Y_test.append(test_windows_y), folds_price_test.append(test_price), folds_topk.append(top_stocks)
+        folds_X_train.append(train_windows_x)
+        folds_Y_train.append(train_windows_y)
+        folds_X_test.append(test_windows_x)
+        folds_Y_test.append(test_windows_y)
+        folds_price_test.append(test_price)
 
-    return [folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test], folds_topk, features_names
+        folds_topk.append(top_stocks)
 
+    return [folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test], folds_topk
+
+
+def statistical_targeting(curr_price, future_price):
+    """
+    prepare continues data for classification task - up = 1, down =-1 or same= 0
+    :param curr_price:
+    :param future_price:
+    :return:
+    """
+    diff_prices = future_price - curr_price
+    avg = np.mean(diff_prices)
+    std = np.std(diff_prices)
+
+    w = 2.0
+    target = [0]
+    while len(set(target)) != 3:
+        target = [np.sign(diff_price) if abs(diff_price) > (avg + w*std) else 0 for diff_price in diff_prices]
+        w = w * 0.5
+    print w
+    return target
+
+
+def diffrence_targeting(curr_price, future_price):
+    """
+    prepare continues data for classification task - up = 1, down =-1 or same= 0
+    :param curr_price:
+    :param future_price:
+    :return:
+    """
+    diff_prices = np.sign(future_price - curr_price)
+    return diff_prices
 
 ################# Evaluation methods ################################
 def simple_profit_evaluation(curr_price, predicted_price):
@@ -611,7 +603,7 @@ def long_short_profit_evaluation(curr_price, predicted_price):
 
 ################# Experiments Executions ############################
 def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test,
-                   features_names, model_class,model_args):
+                   features_selection, model_class,model_args, evaluation_methods, profit_methods, target_discretization):
     """
     a function that run the model on the diffrent folds and calculate metircs
     :param window_len:
@@ -634,7 +626,7 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
     evaluations_values = []
     #iterate folds
     for f in range(len(folds_X_train)):
-        features = [(features_name, wl) for wl in range(window_len) for features_name in features_names]
+        features = [(fe + '_prep', wl) for fe in features_selection[1] for wl in range(window_len)]
         X_train = folds_X_train[f][features]
         X_test = folds_X_test[f][features]
         price_test = folds_price_test[f][TARGET]
@@ -645,15 +637,30 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
             y_test = folds_Y_test[f][t].values
 
             model = model_class(**model_args)
+
             #todo - if pivot
+
             #prepare data for classification fit and evaluation
             lb = LabelBinarizer()
-            X_train_curr_price_prep = X_train[(TARGET_PREP, window_len - 1)].tolist()
+            X_train_curr_price_prep = X_train[(TARGET + "_prep", window_len - 1)].tolist()
             y_train_binary = np.sign(y_train - X_train_curr_price_prep)
             lb.fit(y_train_binary)
 
-            X_test_curr_price_prep = X_test[(TARGET_PREP, window_len - 1)].tolist()
+            X_test_curr_price_prep = X_test[(TARGET + "_prep", window_len - 1)].tolist()
             y_test_binary = np.sign(y_test - X_test_curr_price_prep)
+
+            # lb = LabelBinarizer()
+            # if classifier then descrtisize target value
+            # if not isinstance(model, RegressorMixin):
+            #     X_train_curr_price = X_train[(TARGET + "_prep", window_len - 1)].tolist()
+            #     y_train = target_discretization(X_train_curr_price, y_train)
+            #
+            #     X_test_curr_price = X_test[(TARGET + "_prep", window_len - 1)].tolist()
+            #     y_test = target_discretization(X_test_curr_price, y_test)
+            #     lb.fit(y_train)
+            #     y_test_multi = lb.transform(y_test)
+
+            #if regression then train on original values and transform to binary
 
             if isinstance(model, RegressorMixin):
                 model.fit(X_train, y_train)
@@ -676,6 +683,21 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
             for k1, v in fold_eval.items():
                 eval_values[k1] = v
 
+            # for evaluation_method in evaluation_methods:
+            #     eval_error = dict(fold_eval)
+            #     eval_error["method"] = evaluation_method.__name__
+            #     eval_error["value"] = evaluation_method(y_test,y_preds)
+            #     evaluations.append(eval_error)
+
+            # if classifier then evaluate with relevant measures
+
+            # for evaluation_method in [roc_auc_score]:
+            #     y_proba = model.predict_proba(X_test)
+            #     for target in range(len(lb.classes_)):
+            #         eval_error = dict(fold_eval)
+            #         eval_error["method"] = evaluation_method.__name__ + "_class_" + str(lb.classes_[target])
+            #         eval_error["value"] = evaluation_method(y_test_binary[:, target], y_proba[:, target])
+            #         evaluations.append(eval_error)
             evals = dict(fold_eval)
             evals['accuracy_score'] = accuracy_score(y_test_binary, y_preds_binary)
             evals['f1_score'] = f1_score(y_test_binary, y_preds_binary, average  = 'macro')
@@ -692,6 +714,42 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
             evaluations.append(evals)
             evaluations_values.append(eval_values)
 
+            # for evaluation_method in [accuracy_score]: #,log_loss, f1_score]:
+                # eval_error = dict(fold_eval)
+                # eval_error["method"] = evaluation_method.__name__
+                # eval_error["value"] = evaluation_method(y_test_binary, y_preds_binary)
+                #evaluations.append(eval_error)
+
+            # for evaluation_method in [f1_score]:
+            #     eval_error = dict(fold_eval)
+            #     eval_error["method"] = evaluation_method.__name__
+                # eval_error["value"] = evaluation_method(lb.transform(y_test_binary), lb.transform(y_preds_binary))
+                # eval_error["value"] = evaluation_method(y_test_binary, y_preds_binary, average  = 'macro')
+                # evaluations.append(eval_error)
+
+            # if not isinstance(model, RegressorMixin):
+                # for evaluation_method in [roc_auc_score]:
+                #     eval_error = dict(fold_eval)
+                #     eval_error["method"] = evaluation_method.__name__
+                #     eval_error["value"] = evaluation_method(lb.transform(y_test_binary), lb.transform(y_preds_binary))
+                    # eval_error["value"] = evaluation_method(y_test_binary, y_preds_binary, average='macro')
+                    # evaluations.append(eval_error)
+
+            # eval_values = pd.DataFrame()
+            # eval_values['curr_price'] = price_test
+            # eval_values['preds'] = y_preds_binary
+            # eval_values['y'] = y_test_binary
+            # for k1, v in fold_eval.items():
+            #     eval_values[k1] = v
+
+            # for profit_method in [long_short_profit_evaluation]:
+            #     eval_error = dict(fold_eval)
+            #     eval_error["method"] = profit_method.__name__
+            #     eval_error["value"], eval_values[profit_method.__name__] = profit_method(price_test,y_preds_binary)
+            #     eval_error["sharp_ratio"] = np.mean(eval_values[profit_method.__name__]) / (np.std(eval_values[profit_method.__name__]) + 0.0001)
+            #     evaluations.append(eval_error)
+
+            # evaluations_values.append(eval_values)
     return pd.DataFrame(evaluations), pd.concat(evaluations_values)
 
 
@@ -721,41 +779,47 @@ def get_index_product(params):
     return params_product_dicts
 
 
-def save_evaluations(evaluations, results_path, folds_topk, processing_params,windowing_params):
+def save_evaluations(data_period, evaluations, experiment_path, features_selection, folds_topk, k, n_folds,
+                     preprocessing_pipeline, select_k_func, similarity_func, slide, stock_to_compare,
+                     weighted_sampleing, window_len):
 
-    model_evals = []
-    model_values_evals = []
-    model_params = {}
-    model_params.update(processing_params)
-    model_params.update(windowing_params)
-
+    evaluations_path = [os.path.join(experiment_path, 'models_evaluations.csv'),
+                        os.path.join(experiment_path, 'models_values_evaluations.csv')]
 
     for model_i in range(len(evaluations)):
-        model_eval_df = evaluations[model_i][0]
-        model_values_eval = evaluations[model_i][1]
-        for k1,v1 in model_params.items:
-            model_eval_df[k1] = v1
-            model_values_eval[k1] = v1
-        model_evals.append(model_eval_df)
-        model_values_evals.append(model_values_eval)
-
-
-    pd.concat(model_evals).to_csv(os.path.join(results_path, 'models_evaluations.csv'), mode='a')
-    pd.concat(model_values_evals).to_csv(os.path.join(results_path, 'models_values_evaluations.csv'), mode='a')
-
-
+        #evaluations[model_i][0] = pd.concat(evaluations[model_i][0])
+        for i in range(len(evaluations[model_i])):
+            model_eval = evaluations[model_i][i]
+            model_eval['data_period'] = data_period
+            model_eval['stock_to_compare'] = stock_to_compare
+            model_eval['preprocessing_pipeline'] = " ".join(list(preprocessing_pipeline.named_steps.keys()))
+            model_eval['weighted_sampleing'] = weighted_sampleing
+            model_eval['similarity_func'] = similarity_func.__name__
+            model_eval['k'] = k
+            model_eval['select_k_func'] = select_k_func.__name__
+            model_eval['window_len'] = window_len
+            model_eval['slide'] = slide
+            model_eval['features_selection'] = features_selection[0]
+            model_eval.to_csv(evaluations_path[i], mode='a')
 
     similar_stock_eval_folds = []
-    for f in range(processing_params['n_folds'] - 1):
+    for f in range(n_folds - 1):
         similar_stock_eval_fold = {}
-        similar_stock_eval_fold.update(processing_params)
+        similar_stock_eval_fold['fold'] = f
+        similar_stock_eval_fold['data_period'] = data_period
+        similar_stock_eval_fold['stock_to_compare'] = stock_to_compare
+        similar_stock_eval_fold['preprocessing_pipeline'] = preprocessing_pipeline.named_steps.keys
+        similar_stock_eval_fold['similarity_func'] = similarity_func.__name__
+        similar_stock_eval_fold['k'] = k
+        similar_stock_eval_fold['select_k_func'] = select_k_func.__name__
+
         for name, distance in folds_topk[f].items():
             stock_f = dict(similar_stock_eval_fold)
             stock_f['name'] = name
             stock_f['distance'] = distance
             similar_stock_eval_folds.append(stock_f)
 
-    sim_eval_path = os.path.join(results_path, 'similarity_evaluations.csv')
+    sim_eval_path = os.path.join(experiment_path, 'similarity_evaluations.csv')
     pd.DataFrame(similar_stock_eval_folds).to_csv(sim_eval_path, mode='a')
 
 
@@ -780,59 +844,34 @@ def run_experiment(data_period, stock_to_compare,n_folds,features_selection,fina
     :param force:
     :return:
     """
-
-    experiment_path = os.path.join(home_path, 'experiments', data_period + "_folds-" + str(n_folds), stock_to_compare)
-    data_path = os.path.join(experiment_path,'data', 'fs-' +features_selection[0] + 'finance_fe-' + str(finance_features) + "_norm-" + normalization
-                                        + "_transform-" + transformation )
-    similarity_path = os.path.join(experiment_path,'similarity', 'func-' +similarity_func.__name__ + '_col-' + similarity_col )
+    experiment_path = os.path.join(home_path,'experiments', data_period)
     if not os.path.exists(os.path.dirname(experiment_path)):
         os.makedirs(experiment_path)
-    if not os.path.exists(os.path.dirname(data_path)):
-        os.makedirs(data_path)
-    if not os.path.exists(os.path.dirname(similarity_path)):
-        os.makedirs(similarity_path)
 
     df_stocks = get_data(data_period)
 
     # preapare data with slide, time window as fold -> test + train X features + targets
-    folds_loaded, folds_topk,features_names = prepare_folds(df_stocks, stock_to_compare,n_folds,features_selection,finance_features,
-                                                            normalizations[normalization],transformations[transformation],to_pivot,k,select_k_func,similarity_col,
-                                             similarity_func,window_len,slide,weighted_sampleing,y_col,next_t,
-                                             data_path, similarity_path, force)
+    folds_loaded, folds_topk = prepare_folds(data_period, stock_to_compare,n_folds,features_selection,finance_features,normalization,transformation,to_pivot,\
+    k,select_k_func,similarity_col, similarity_func,window_len,slide,weighted_sampleing,y_col,next_t)
 
     folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test = \
-        folds_loaded[0], folds_loaded[1], folds_loaded[2], folds_loaded[3], folds_loaded[4]
+        folds_loaded[0], \
+           folds_loaded[1], \
+           folds_loaded[2], \
+           folds_loaded[3], \
+           folds_loaded[4]
 
     evaluations = [evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test,
-                                  features_names, model,models_arg[model.__name__])
-                   for model in models]
+                                  features_selection, model,
+                                  models_arg[model.__name__],
+                                  [], [],
+                                  target_discretization) for model in models]
 
-    processing_params = {'data_period' : data_period,
-                         'stock_to_compare' : stock_to_compare,
-                         'n_folds' : n_folds,
-                         'features_selection' : features_selection,
-                         'finance_features' : finance_features,
-                         'normalization' : normalization,
-                         'transformation' : transformation,
-                         'k' : k,
-                         'select_k_func' : select_k_func,
-                         'similarity_col' : similarity_col,
-                         'similarity_func' : similarity_func}
-
-    windowing_params = {'window_len': window_len,
-                         'slide': slide,
-                         'weighted_sampleing' : weighted_sampleing,
-                         'y_col' : y_col,
-                         'next_t' : next_t}
-
-    save_evaluations(evaluations, experiment_path, folds_topk, processing_params,windowing_params)
-    return experiment_path
+    save_evaluations(data_period, evaluations, experiment_path, features_selection, folds_topk, k, n_folds,
+                     preprocessing_pipeline, select_k_func, similarity_func, slide, stock_to_compare,
+                     weighted_sampleing, window_len)
 
 
-transformations  = {'None' : None,
-                    'SAX': SAX(),
-                    'PCA' : PCA()}
-normalizations  = {'Standard' : StandardScaler()}
 
 def main():
 
@@ -846,8 +885,8 @@ def main():
         # ('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
         # ('open_close_volume', [u'Open', u'Close', u'Volume'])]
         'finance_features': [True, False],
-        'normalization': ['Standard'],
-        'transformation': ['None', 'SAX', 'PCA'],
+        'normalization': [StandardScaler()],
+        'transformation': [None, SAX(), PCA()],
         'k': [10],
         'select_k_func': [get_top_k],#, get_random_k],
         'similarity_col': ['Close'],
@@ -875,11 +914,7 @@ def main():
     for experiment in experiments:
         print "run experiment: " + str(experiment)
         experiment.update(experiment_static_params)
-        results_path = run_experiment(**experiment)
-
-    pd.DataFrame().to_csv(os.path.join(results_path, 'models_values_evaluations.csv'), mode='a')
-    pd.DataFrame().to_csv(os.path.join(results_path, 'models_evaluations.csv'), mode='a')
-    pd.DataFrame().to_csv(os.path.join(results_path, 'similarity_evaluations.csv'), mode='a')
+        run_experiment(**experiment)
 
 
     # experiment_static_params = \

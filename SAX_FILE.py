@@ -196,6 +196,7 @@ class SAX(BaseEstimator, TransformerMixin):
         if isinstance(X,pd.DataFrame):
             x =1 #TODO for each column apply and insert a chart return DF
         # TODO if list return sting
+        # SAX is static!
         (x1String, x1Indices) = self.to_letter_rep(X)
 
         return x1String
