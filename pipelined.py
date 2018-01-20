@@ -20,11 +20,13 @@ from sklearn.metrics import mean_squared_error
 
 import itertools
 
+from sklearn.metrics import precision_score
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.utils import resample
 
 
@@ -34,6 +36,9 @@ TIME = 'Date'
 ENTITY = 'Name'
 TARGET = 'Close'
 FEATURES = ['Close']
+
+from SAX_FILE import SAX
+sax_obj = SAX()
 
 def get_data(data_period):
     file_path = os.path.join(home_path, 'sandp500','all_stocks_' + data_period + '.csv')
@@ -135,6 +140,14 @@ class model_bases_distance(object):
 
     @property
     def __name__(self): return "model_bases_distance"
+
+
+def compare_sax(stock1, stock2):
+    stock1, stock2 = fix_stock_len(stock1, stock2)
+    stock1_s = sax_obj.transform(stock1)
+    stock2_s = sax_obj.transform(stock2)
+    return sax_obj.compare_strings(stock1_s, stock2_s)
+
 
 
 def get_similarity(df_stocks, stock_to_compare, stock_names, similarity_func, experiment_path, force = False, split_time = ""):
@@ -640,6 +653,14 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
             fold_eval["model"] = model_class.__name__
             fold_eval["next_t"] = t
 
+            eval_values = pd.DataFrame()
+            eval_values['curr_price'] = price_test
+            eval_values['preds'] = y_preds_binary
+            eval_values['y'] = y_test_binary
+            # eval_values['curr_price2'] = folds_price_test[f][t].values
+            for k1, v in fold_eval.items():
+                eval_values[k1] = v
+
             # for evaluation_method in evaluation_methods:
             #     eval_error = dict(fold_eval)
             #     eval_error["method"] = evaluation_method.__name__
@@ -655,29 +676,58 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
             #         eval_error["method"] = evaluation_method.__name__ + "_class_" + str(lb.classes_[target])
             #         eval_error["value"] = evaluation_method(y_test_binary[:, target], y_proba[:, target])
             #         evaluations.append(eval_error)
-            for evaluation_method in [accuracy_score]: #,log_loss, f1_score]:
-                eval_error = dict(fold_eval)
-                eval_error["method"] = evaluation_method.__name__
-                #eval_error["value"] = evaluation_method(lb.transform(y_test_binary), lb.transform(y_preds_binary))
-                eval_error["value"] = evaluation_method(y_test_binary, y_preds_binary)
-                evaluations.append(eval_error)
+            evals = dict(fold_eval)
+            evals['accuracy_score'] = accuracy_score(y_test_binary, y_preds_binary)
+            evals['f1_score'] = f1_score(y_test_binary, y_preds_binary, average  = 'macro')
+            evals['precision_score'] = precision_score(y_test_binary, y_preds_binary, average='macro')
 
-            eval_values = pd.DataFrame()
+            if not isinstance(model, RegressorMixin):
+                evals['roc_auc_score'] = roc_auc_score(y_test_binary, y_preds_binary, average='macro')
+            else:
+                evals['roc_auc_score'] = 0
 
-            eval_values['curr_price'] = price_test
-            eval_values['preds'] = y_preds_binary
-            eval_values['y'] = y_test_binary
-            #eval_values['curr_price2'] = folds_price_test[f][t].values
-            for k1, v in fold_eval.items():
-                eval_values[k1] = v
-            for profit_method in profit_methods:
-                eval_error = dict(fold_eval)
-                eval_error["method"] = profit_method.__name__
-                eval_error["value"], eval_values[profit_method.__name__] = profit_method(price_test,y_preds_binary)
-                eval_error["sharp_ratio"] = np.mean(eval_values[profit_method.__name__]) / (np.std(eval_values[profit_method.__name__]) + 0.0001)
-                evaluations.append(eval_error)
+            evals["long_short_profit"], eval_values["long_short_profit"] = long_short_profit_evaluation(price_test, y_preds_binary)
+            evals["sharp_ratio"] = np.mean(eval_values["long_short_profit"]) / (np.std(eval_values["long_short_profit"]) + 0.0001)
 
+            evaluations.append(evals)
             evaluations_values.append(eval_values)
+
+            # for evaluation_method in [accuracy_score]: #,log_loss, f1_score]:
+                # eval_error = dict(fold_eval)
+                # eval_error["method"] = evaluation_method.__name__
+                # eval_error["value"] = evaluation_method(y_test_binary, y_preds_binary)
+                #evaluations.append(eval_error)
+
+            # for evaluation_method in [f1_score]:
+            #     eval_error = dict(fold_eval)
+            #     eval_error["method"] = evaluation_method.__name__
+                # eval_error["value"] = evaluation_method(lb.transform(y_test_binary), lb.transform(y_preds_binary))
+                # eval_error["value"] = evaluation_method(y_test_binary, y_preds_binary, average  = 'macro')
+                # evaluations.append(eval_error)
+
+            # if not isinstance(model, RegressorMixin):
+                # for evaluation_method in [roc_auc_score]:
+                #     eval_error = dict(fold_eval)
+                #     eval_error["method"] = evaluation_method.__name__
+                #     eval_error["value"] = evaluation_method(lb.transform(y_test_binary), lb.transform(y_preds_binary))
+                    # eval_error["value"] = evaluation_method(y_test_binary, y_preds_binary, average='macro')
+                    # evaluations.append(eval_error)
+
+            # eval_values = pd.DataFrame()
+            # eval_values['curr_price'] = price_test
+            # eval_values['preds'] = y_preds_binary
+            # eval_values['y'] = y_test_binary
+            # for k1, v in fold_eval.items():
+            #     eval_values[k1] = v
+
+            # for profit_method in [long_short_profit_evaluation]:
+            #     eval_error = dict(fold_eval)
+            #     eval_error["method"] = profit_method.__name__
+            #     eval_error["value"], eval_values[profit_method.__name__] = profit_method(price_test,y_preds_binary)
+            #     eval_error["sharp_ratio"] = np.mean(eval_values[profit_method.__name__]) / (np.std(eval_values[profit_method.__name__]) + 0.0001)
+            #     evaluations.append(eval_error)
+
+            # evaluations_values.append(eval_values)
     return pd.DataFrame(evaluations), pd.concat(evaluations_values)
 
 
@@ -797,7 +847,7 @@ def run_experiment(data_period, stock_to_compare, preprocessing_pipeline,feature
     evaluations = [evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test,
                                   features_selection, model,
                                   models_arg[model.__name__],
-                                  [mean_squared_error], [simple_profit_evaluation, long_short_profit_evaluation],
+                                  [], [],
                                   target_discretization) for model in models]
 
     save_evaluations(data_period, evaluations, experiment_path, features_selection, folds_topk, k, n_folds,
@@ -805,18 +855,63 @@ def run_experiment(data_period, stock_to_compare, preprocessing_pipeline,feature
                      weighted_sampleing, window_len)
 
 
+
 def main():
-    #regular experiment
+    # 1 ADD:
+    Pipeline([('normalization_standard', StandardScaler()),
+              ('feature_extraction', FinancialFE()),
+              ('feature_reduction', PCA()),
+               ('Discretization_selection', SAX())])
+
+    experiment_params = {
+        'data_period': ['1yr'],
+        'n_folds': [6],
+        # tech, finance, service, health, consumer, Industrial
+        'stock_to_compare': ["GOOGL"],  # , "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
+        'k': [10],
+        'select_k_func': [get_top_k],
+        'window_len': [10],  # , 5, 20],
+        'slide': [1],  # , 3, 5, 10],
+        'preprocessing_pipeline': [Pipeline([('SAX', sax_obj)])],
+        'similarity_func': [compare_sax],
+        'weighted_sampleing': [False],  # False],
+        'target_discretization': [statistical_targeting],  # difference
+        'features_selection': [  # ('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
+            ('only_close', [u'Close'])
+        ]
+    }
+
+    experiment_static_params = \
+        {
+            'next_t': [1, 3, 7],
+            'to_pivot': True,
+            'models': [RandomForestClassifier, RandomForestRegressor, GradientBoostingRegressor,
+                       GradientBoostingClassifier],
+            'models_arg': {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state': 0},
+                           RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state': 0},
+                           GradientBoostingClassifier.__name__: {'learning_rate': 0.02, 'random_state': 0},
+                           GradientBoostingRegressor.__name__: {'learning_rate': 0.02, 'random_state': 0}}
+        }
+
+    experiments = get_index_product(experiment_params)
+    for experiment in experiments:
+        print "run experiment: " + str(experiment)
+        experiment.update(experiment_static_params)
+        run_experiment(**experiment)
+
+
+        #regular experiment
     experiment_params = {
         'data_period': ['1yr'],
         'n_folds' : [6],
         # tech, finance, service, health, consumer, Industrial
         'stock_to_compare' : ["GOOGL"], #, "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
-        'k' : [10, 1 , 25],
+        'k' : [0, 10 , 25],
         'select_k_func' : [get_top_k],#, get_random_k],
         'window_len' : [10],#, 5, 20],
         'slide' : [1],#, 3, 5, 10],
-        'preprocessing_pipeline' : [Pipeline([('minmax_normalize', MinMaxScaler())])],
+        'preprocessing_pipeline' : [Pipeline([('minmax_normalize', MinMaxScaler())]),
+                                    Pipeline([('StandardScaler', StandardScaler())])],
         'similarity_func' : [model_bases_distance(RandomForestRegressor(100,random_state = 0))],#, apply_euclidean,apply_dtw, apply_pearson],
         'weighted_sampleing': [True, False],
         'target_discretization' : [diffrence_targeting],
