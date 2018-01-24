@@ -157,6 +157,7 @@ class SAX(BaseEstimator, TransformerMixin):
                     low_num = np.min([number_rep[i], number_rep[j]])
                     self.compareDict[letters[i]+letters[j]] = self.beta[high_num] - self.beta[low_num]
 
+
     def sliding_window(self, x, numSubsequences = None, overlappingFraction = None):
         if not numSubsequences:
             numSubsequences = 20
@@ -191,12 +192,16 @@ class SAX(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         return self
 
-
     def transform(self, X, y='deprecated', copy=None):
-        if isinstance(X,pd.DataFrame):
-            x =1 #TODO for each column apply and insert a chart return DF
-        # TODO if list return sting
-        # SAX is static!
-        (x1String, x1Indices) = self.to_letter_rep(X)
-
-        return x1String
+        if isinstance(X, pd.DataFrame):
+            X_ = X.copy()
+            for column in X:
+                self.wordSize = len(X[column])
+                (xString, xIndices) = self.to_letter_rep(X[column])
+                ints =[ ord(symb) - self.aOffset for symb in list(xString)]
+                X_[column] =ints
+            return X_.values
+        else:
+            self.wordSize = int(math.ceil(abs(len(X) / 10)))
+            (x1String, x1Indices) = self.to_letter_rep(X)
+            return x1String

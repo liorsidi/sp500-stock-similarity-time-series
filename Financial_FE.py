@@ -56,9 +56,13 @@ def computeMACD(x, slow=26, fast=12):
     compute the MACD (Moving Average Convergence/Divergence) using a fast and slow exponential moving avg'
     return value is emaslow, emafast, macd which are len(x) arrays
     """
-    if slow > len(x):
+    if slow >= len(x):
         slow = len(x) -1
-        fast = abs(slow / 2)
+        fast = abs(slow / 2) -1
+
+    if fast <= 5 :
+        return 0, 0, np.zeros(len(x))
+
     emaslow = ExpMovingAverage(x, slow)
     emafast = ExpMovingAverage(x, fast)
     return emaslow, emafast, emafast - emaslow

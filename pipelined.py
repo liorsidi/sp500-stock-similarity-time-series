@@ -110,23 +110,23 @@ class model_bases_distance(object):
     def __init__(self, model):
         self.model = model
 
-    def stock_norm_prep(self,stock_X):
-        numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
-        numeric_cols = stock_X.select_dtypes(include=numerics).columns.tolist()
-        numeric_cols_prep = [s + "_prep" for s in numeric_cols]
-
-        mms = MinMaxScaler()
-
-        train_stock_X_names_df = stock_X[[ENTITY, TARGET]].reset_index(drop=True)
-        stock_X_norm = mms.fit_transform(stock_X[numeric_cols])
-        train_stock_X_norm_df = pd.DataFrame(stock_X_norm, columns=numeric_cols_prep).reset_index(drop=True)
-        train_stock_X_prep = pd.merge(train_stock_X_names_df, train_stock_X_norm_df, left_index=True, right_index=True)
-
-        return train_stock_X_prep
-
     def fit(self, stock_X):
-        stock_X_prep = self.stock_norm_prep(stock_X)
-        x, y, _ = prepare_stock_windows(stock_X_prep, 10,1, [1], [TARGET+ '_prep'])
+        train_stock_to_compare_X, normalization_f, transformation_f, features_names = preprocess_stock_features(stock_X,
+                                                                                                   stock_X[ENTITY].iloc[0],
+                                                                                                   ('only_close', [u'Close']),
+                                                                                                   finance_features= True,
+                                                                                                   normalization = normalizations['Standard'],
+                                                                                                   transformation = transformations['None'],y_col=TARGET)
+
+        stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_stock_to_compare_X,
+                                                                                list(features_names), 10, 1,
+                                                                                [1],
+                                                                                True, TARGET)
+
+        features = [(feature_name, wl) for wl in range(10) for feature_name in list(features_names)]
+        x = stock_train_windows_x[features]
+        y = stock_train_windows_y[u'1'].values
+
         self.model.fit(x,y)
 
     def apply_distance(self, stock_X):
@@ -136,12 +136,26 @@ class model_bases_distance(object):
         :param stock2:
         :return:
         """
-        stock_X_prep = self.stock_norm_prep(stock_X)
-        x, y, _ = prepare_stock_windows(stock_X_prep, 10, 1, [1], [TARGET + '_prep'])
-
-        preds = self.model.predict(x)
-
-        return mean_squared_error(y,preds)
+        train_stock_to_compare_X, normalization_f, transformation_f, features_names = preprocess_stock_features(stock_X,
+                                                                                                                stock_X[
+                                                                                                                    ENTITY].iloc[
+                                                                                                                    0],
+                                                                                                                [
+                                                                                                                    TARGET],
+                                                                                                                finance_features=True,
+                                                                                                                normalization=
+                                                                                                                normalizations[
+                                                                                                                    'Standard'],
+                                                                                                                transformation=
+                                                                                                                transformations[
+                                                                                                                    'None'],
+                                                                                                                y_col=TARGET)
+        stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_stock_to_compare_X,
+                                                                                list(features_names), 10, 1,
+                                                                                [1],
+                                                                                True, TARGET)
+        preds = self.model.predict(stock_train_windows_x)
+        return mean_squared_error(stock_train_windows_y, preds)
 
     @property
     def __name__(self): return "model_bases_distance"
@@ -268,9 +282,6 @@ def prepare_stock_windows(stock_X, features_names, window_len, slide, next_t, to
             stock_X_window_flat = stock_X_window_flat.iloc[0].to_dict()
             stock_X_window_flat[TIME] = window_time
             X_stocks_windows.append(stock_X_window_flat)
-        # else:
-        #     stock_X_window_df = stock_X_window[features_names]
-        #     X_stocks_windows[stock_name + str(i)] = window_time
 
         next_y = y[y_ti]
         y_vals = next_y.tolist()
@@ -314,7 +325,10 @@ def combine_df(data, name, cols_names, idx_name,idx_col):
 
 def preprocess_stock_features(stocks_df, stock_name,features_selection, finance_features, normalization, transformation,y_col, to_fit = True):
     numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
-    features = [fe for fe in features_selection[1]]
+    if isinstance(features_selection,tuple):
+        features = [fe for fe in features_selection[1]]
+    else:
+        features = [fe for fe in features_selection]
     selected_numeric_cols = stocks_df[features].select_dtypes(include=numerics).columns.tolist()
 
     stock_X_raw = stocks_df[stocks_df[ENTITY] == stock_name]
@@ -352,7 +366,7 @@ def preprocess_stock_features(stocks_df, stock_name,features_selection, finance_
     if transformation is not None:
         if to_fit:
             transformation.fit(stock_X_prep_df)
-        stock_X_transform = normalization.transform(stock_X_prep_df)
+        stock_X_transform = transformation.transform(stock_X_prep_df)
         stock_X_norm_df = combine_df(stock_X_transform, "_transform", stock_X_prep_df.columns, TIME, stock_X.index)
         stock_X_prep_df = pd.merge(stock_X_prep_df, stock_X_norm_df, left_index=True, right_index=True)
 
@@ -422,7 +436,7 @@ def prepare_rolling_periods_for_top_stocks(data_period, stock_to_compare,
 
     #calc similar stock on all previous data with atleast window len amount of recoeds
     count_stock = train_X_all_prev_periods.groupby([ENTITY]).count()[TIME].reset_index()
-    prev_stocks_names = count_stock[count_stock[TIME] > window_len][ENTITY].tolist()
+    prev_stocks_names = count_stock[count_stock[TIME] > window_len + max(next_t) + slide*15][ENTITY].tolist()
 
     file_name = "before_" + str(str(end_period_train))
     #calculate_features for all stocks
@@ -647,18 +661,21 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
             model = model_class(**model_args)
             #todo - if pivot
             #prepare data for classification fit and evaluation
-            lb = LabelBinarizer()
+            # lb = LabelBinarizer()
             X_train_curr_price_prep = X_train[(TARGET_PREP, window_len - 1)].tolist()
             y_train_binary = np.sign(y_train - X_train_curr_price_prep)
-            lb.fit(y_train_binary)
+            y_train_binary = [1 if x == 0 else x for x in y_train_binary]
+            # lb.fit(y_train_binary)
 
             X_test_curr_price_prep = X_test[(TARGET_PREP, window_len - 1)].tolist()
             y_test_binary = np.sign(y_test - X_test_curr_price_prep)
+            y_test_binary = [1 if x == 0 else x for x in y_test_binary]
 
             if isinstance(model, RegressorMixin):
                 model.fit(X_train, y_train)
                 y_preds_val = model.predict(X_test)
                 y_preds_binary = np.sign(y_preds_val - X_test_curr_price_prep)
+                y_preds_binary = [1 if x == 0 else x for x in y_preds_binary]
             else:
                 model.fit(X_train, y_train_binary)
                 y_preds_binary = model.predict(X_test)
@@ -682,6 +699,7 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
             evals['precision_score'] = precision_score(y_test_binary, y_preds_binary, average='macro')
 
             if not isinstance(model, RegressorMixin):
+                #y_proba = model.predict_proba(X_test)
                 evals['roc_auc_score'] = roc_auc_score(y_test_binary, y_preds_binary, average='macro')
             else:
                 evals['roc_auc_score'] = 0
@@ -783,10 +801,10 @@ def run_experiment(data_period, stock_to_compare,n_folds,features_selection,fina
     :return:
     """
 
-    experiment_path = os.path.join(home_path, 'experiments', data_period + "_folds-" + str(n_folds), stock_to_compare)
-    data_path = os.path.join(experiment_path,'data', 'fs-' +features_selection[0] + '_finance_fe-' + str(finance_features) + "_norm-" + normalization
+    experiment_path = os.path.join(home_path, 'experiments', data_period + "_folds-" + str(n_folds))
+    data_path = os.path.join(experiment_path,stock_to_compare,'data', 'fs-' +features_selection[0] + '_finance_fe-' + str(finance_features) + "_norm-" + normalization
                                         + "_transform-" + transformation,'fold-')
-    similarity_path = os.path.join(experiment_path,'similarity', 'func-' +similarity_func + '_col-' + similarity_col,'fold-' )
+    similarity_path = os.path.join(experiment_path,stock_to_compare,'similarity', 'func-' +similarity_func + '_col-' + similarity_col,'fold-' )
     if not os.path.exists(os.path.dirname(experiment_path)):
         os.makedirs(experiment_path)
     if not os.path.exists(os.path.dirname(data_path)):
@@ -840,7 +858,7 @@ select_k_funcs  = {'get_random_k' : get_random_k,
                     'get_top_k': get_top_k}
 
 similarity_funcs = {'sax' : compare_sax,
-                    'model_based_RF': model_bases_distance(RandomForestRegressor(100, random_state=0)),
+                    'model_based_RFR': model_bases_distance(RandomForestRegressor(n_estimators = 50, random_state=0)),
                     'euclidean' : apply_euclidean,
                     'dtw' : apply_dtw,
                     'pearson' : apply_pearson
@@ -851,22 +869,21 @@ def main():
     experiment_params = {
         'data_period': ['5yr'],
         # tech, finance, service, health, consumer, Industrial
-        'stock_to_compare': ["GOOGL", "JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
+        'stock_to_compare': ["GOOGL","JPM", "DIS", "JNJ", "MMM", "KO", "GE"],
         'n_folds': [6],
         'features_selection': [ ('only_close', [u'Close'])],
         # ('full_features' ,[u'Open',u'High',u'Low',u'Close',u'Volume']),
-        # ('open_close_volume', [u'Open', u'Close', u'Volume'])]
-        'finance_features': [True],#, False],
+       # ('open_close_volume', [u'Open', u'Close', u'Volume'])],
+        'finance_features': [True],# False],
         'normalization': ['Standard'],
         'transformation': ['None'],# 'SAX', 'PCA'],
-        'k': [0],#,10,25],
+        'k': [10, 25],
         'select_k_func': ['get_top_k'],#, 'get_random_k'],
         'similarity_col': ['Close'],
-        'similarity_func': ['sax'],
-                            #model_bases_distance(RandomForestRegressor(100, random_state=0)), apply_euclidean,apply_dtw, apply_pearson],
-        'window_len': [1,10],  # , 0, 20],
+        'similarity_func': ['model_based_RFR','pearson','sax','euclidean','dtw'],#],
+        'window_len': [10],  # , 0, 20],
         'slide': [1],  # , 3, 5, 10],
-        'weighted_sampleing': [False],  # True],
+        'weighted_sampleing': [False,  True],
         'y_col': ['Close'],
     }
 
@@ -874,7 +891,7 @@ def main():
         {
             'next_t': [1, 3, 7],
             'to_pivot': True,
-            'models': [RandomForestClassifier, RandomForestRegressor,GradientBoostingRegressor,GradientBoostingClassifier],
+            'models': [RandomForestClassifier,RandomForestRegressor, GradientBoostingRegressor,GradientBoostingClassifier],
             'models_arg' : {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state' : 0},
                             RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state' : 0},
                             GradientBoostingClassifier.__name__: {'learning_rate': 0.02, 'random_state': 0},
