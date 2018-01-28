@@ -935,5 +935,39 @@ def main():
 
 main()
 
+train_windows_x, train_windows_y, train_price, test_windows_x, test_windows_y, test_price = [], [], [], [], [], []
 
+stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_X[train_X[ENTITY] == stock_to_compare],
+                                                                        features_names, window_len, slide, next_t,
+                                                                        to_pivot, y_col)
+train_windows_x.append(stock_train_windows_x)
+train_windows_y.append(stock_train_windows_y)
 
+stock_test_windows_x, stock_test_windows_y, stock_prices_test = prepare_stock_windows(
+    test_X[test_X[ENTITY] == stock_to_compare],
+    features_names,
+    window_len, slide, next_t,
+    to_pivot, y_col)
+test_windows_x.append(stock_test_windows_x)
+test_windows_y.append(stock_test_windows_y)
+test_price.append(stock_prices_test)
+
+# prepare windows per stock
+for stock_name in top_stock_w.keys():
+    stock_train_windows_x, stock_train_windows_y, _ = prepare_stock_windows(train_X[train_X[ENTITY] == stock_name]
+                                                                            , features_names, window_len,
+                                                                            slide,
+                                                                            next_t,
+                                                                            to_pivot, y_col)
+
+    if weighted_sampleing:
+        np.random.seed(0)
+        msk = np.random.rand(len(stock_train_windows_x)) < top_stock_w[stock_name]
+        stock_train_windows_x = stock_train_windows_x[msk]
+        stock_train_windows_y = stock_train_windows_y[msk]
+    train_windows_x.append(stock_train_windows_x)
+    train_windows_y.append(stock_train_windows_y)
+
+return pd.concat(train_windows_x), pd.concat(train_windows_y), \
+       pd.concat(test_windows_x), pd.concat(test_windows_y), pd.concat(test_price), pd.concat(train_curr_target_prep), \
+       pd.concat(test_curr_target_prep)
