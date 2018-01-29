@@ -125,6 +125,8 @@ def apply_dtw(stock1, stock2,fix_len_func = correlate_stock_len, similarity_col 
     :return:
     """
     stock1, stock2 = fix_len_func(stock1, stock2)
+    if len(stock1) == 0 or len(stock2) == 0:
+        return 1000
     return dtw(stock1[similarity_col].tolist(), stock2[similarity_col].tolist(), dist=lambda x, y: abs(x - y))[0]
 
 
@@ -136,6 +138,8 @@ def apply_pearson(stock1, stock2,fix_len_func = correlate_stock_len,similarity_c
     :return:
     """
     stock1, stock2 = fix_len_func(stock1, stock2)
+    if len(stock1) == 0 or len(stock2) == 0:
+        return 1000
     pearson = np.corrcoef(np.array(stock1[similarity_col].tolist()), np.array(stock2[similarity_col].tolist()))[0, 1]
     return abs(pearson - 1)
 
@@ -180,6 +184,10 @@ class model_bases_distance(object):
         :param stock2:
         :return:
         """
+
+        if stock_name not in df[ENTITY].unique():
+            print stock_name
+            return 1000
         train_points_x, train_points_y, \
         test_points_x, test_points_y, test_price, _, _ = prepare_train_test_points(stock_name, df,None,[1],None,None,self.similarity_col)
 
@@ -1086,7 +1094,7 @@ def calc_similarites(data_name):
 
     stock_X_prep_dfs = pd.concat(stock_X_prep_dfs)
     similarity_params = dict(
-        similarity_col=[TARGET_PREP, 'rsi', 'Close_proc', 'MACD', 'Volume_norm'],
+        similarity_col=[TARGET_PREP, 'rsi', 'Close_proc', 'MACD'], #, 'Volume_norm'],
         y_col = [TARGET],
         similarity_func_name = similarity_funcs.keys(),
         fix_len_func_name = fix_len_funcs.keys(),
@@ -1138,7 +1146,7 @@ def main():
     experiment_params = {
         'data_period': ['5yr'],
         # tech, finance, service, health, consumer, Industrial
-        'stock_to_compare': ["JPM"],#"GOOGL", "DIS", "JNJ", "MMM", "KO", "GE"],
+        'stock_to_compare': ["JPM","GOOGL", "KO", "GE"], # "DIS", "JNJ", "MMM", "KO", "GE"],
         'n_folds': [6],
 
         'features_selection': [
@@ -1154,9 +1162,9 @@ def main():
         'normalization': ['Standard'],
         'transformation': ['None'],# 'SAX', 'PCA'],
         'k': [10, 0, 25],
-        'select_k_func': ['get_top_k'],#, 'get_random_k'],
+        'select_k_func': ['get_top_k', 'get_random_k'],
         'similarity_col': ['Close_proc'],
-        'similarity_func': ['sax','euclidean','pearson'],#,'model_based_RFR','pearson','euclidean','dtw'],#],
+        'similarity_func': ['dtw','sax','pearson'],#],
         'fix_len_func': ['time_corr'],#,'delay',''],
         'window_len': [0, 10],  # , 0, 20],
         'slide': [1],  # , 3, 5, 10],
@@ -1177,9 +1185,14 @@ def main():
         }
 
     experiments = get_index_product(experiment_params)
+
     for experiment in experiments:
-        if (experiment['k'] == 0 and experiment['weighted_sampleing'] is not True)\
+        if (experiment['k'] == 0 and experiment['weighted_sampleing'] is not True) \
+                or (experiment['window_len'] == 0 and experiment['similarity_func'] is not "euclidean" \
+                    and experiment['similarity_col'] is not "Close_proc" \
+                    and experiment['select_k_func'] is not "get_top_k") \
                 or (experiment['window_len'] == 0 and experiment['weighted_sampleing'] is not True) \
+                or (experiment['k'] == 0 and experiment['select_k_func'] == 'get_random_k') \
                 or (experiment['window_len'] != 0 and experiment['features_selection'][0] == 'multi'):
             continue
 
@@ -1187,9 +1200,9 @@ def main():
         experiment.update(experiment_static_params)
         results_path = run_experiment(**experiment)
 
-    pd.DataFrame().to_csv(os.path.join(results_path, 'models_values_evaluations.csv'), mode='a')
-    pd.DataFrame().to_csv(os.path.join(results_path, 'models_evaluations.csv'), mode='a')
-    pd.DataFrame().to_csv(os.path.join(results_path, 'similarity_evaluations.csv'), mode='a')
+        pd.DataFrame().to_csv(os.path.join(results_path, 'models_values_evaluations.csv'), mode='a')
+        pd.DataFrame().to_csv(os.path.join(results_path, 'models_evaluations.csv'), mode='a')
+        pd.DataFrame().to_csv(os.path.join(results_path, 'similarity_evaluations.csv'), mode='a')
 
 
     # experiment_static_params = \
@@ -1208,6 +1221,7 @@ def main():
     #
         #run_experiment(**experiment)
 
+#calc_similarites('5yr')
 main()
 
 
