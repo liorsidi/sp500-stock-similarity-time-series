@@ -279,6 +279,14 @@ class model_bases_distance(object):
         return "model_bases_distance"
 
 
+import statsmodels.tsa.stattools as ts
+def coinintegration(stock1, stock2, fix_len_func=correlate_stock_len, similarity_col=TARGET):
+    stock1, stock2 = fix_len_func(stock1, stock2)
+    if len(stock1) <= 25 or len(stock2) <= 25:
+        return 1000
+    oin_t, p_val, _crit = ts.coint(stock1[similarity_col].tolist(),stock2[similarity_col].tolist())
+    return p_val
+
 def calculate_similarity_all_stocks(df_stocks, stock_to_compare, stock_names, similarity_func,
                                     similarity_file_path, fix_len_func=correlate_stock_len, similarity_col=TARGET,
                                     force=False, split_time="", **kwargs):
@@ -475,7 +483,7 @@ def preprocess_stock_features(stocks_df, stock_name, features_selection, finance
     if y_col in stock_X_prep_df.columns:
         stock_X_prep_df[TARGET_PREP] = stock_X_prep_df[y_col]
     else:
-        raise 'no y cols to evaluate'
+        raise Exception('no y cols to evaluate')
 
     if TARGET not in stock_X_prep_df.columns:
         stock_X_prep_df[TARGET] = stock_X_raw[TARGET]
@@ -953,22 +961,22 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
 
             model = model_class(**model_args)
 
-            y_train_binary = np.sign(y_train - X_train_curr_price_prep)
-            y_train_binary = [1 if x == 0 else x for x in y_train_binary]
-
-            y_test_binary = np.sign(y_test - X_test_curr_price_prep)
-            y_test_binary = [1 if x == 0 else x for x in y_test_binary]
-
             if isinstance(model, RegressorMixin):
                 model.fit(X_train, y_train)
                 y_preds_val = model.predict(X_test)
-                if (y_col == 'price_norm'):
+                if (y_col == 'Close_norm'):
                     y_preds_binary = np.sign(y_preds_val - X_test_curr_price_prep)
                     y_preds_binary = [1 if x == 0 else x for x in y_preds_binary]
-                elif (y_col == 'price_proc'):
+                elif (y_col == 'Close_proc'):
                     y_preds_binary =  np.sign(y_preds_val)
 
             else:
+                if (y_col == 'Close_norm'):
+                    y_train_binary = np.sign(y_train - X_train_curr_price_prep)
+                    y_train_binary = [1 if x == 0 else x for x in y_train_binary]
+                elif (y_col == 'Close_proc'):
+                    y_train_binary =  np.sign(y_train)
+
                 model.fit(X_train, y_train_binary)
                 y_preds_binary = model.predict(X_test)
 
@@ -980,6 +988,13 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
             eval_values = pd.DataFrame()
             eval_values['curr_price'] = price_test
             eval_values['preds'] = y_preds_binary
+
+            if (y_col == 'Close_norm'):
+                y_test_binary = np.sign(y_test - X_test_curr_price_prep)
+                y_test_binary = [1 if x == 0 else x for x in y_test_binary]
+            elif (y_col == 'Close_proc'):
+                y_test_binary = np.sign(y_test)
+
             eval_values['y'] = y_test_binary
             # eval_values['curr_price2'] = folds_price_test[f][t].values
             for k1, v in fold_eval.items():
@@ -992,7 +1007,10 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
 
             if not isinstance(model, RegressorMixin):
                 # y_proba = model.predict_proba(X_test)
-                evals['roc_auc_score'] = roc_auc_score(y_test_binary, y_preds_binary, average='macro')
+                try:
+                    evals['roc_auc_score'] = roc_auc_score(y_test_binary, y_preds_binary, average='macro')
+                except:
+                    evals['roc_auc_score'] = -1
             else:
                 evals['roc_auc_score'] = 0
 
@@ -1160,7 +1178,9 @@ normalizations = {'Standard': StandardScaler()}
 select_k_funcs = {'get_random_k': get_random_k,
                   'get_top_k': get_top_k}
 
-similarity_funcs = {'model_based_LSTM': model_bases_distance(ANN_stock()),
+
+similarity_funcs = {'cointegration': coinintegration,
+    'model_based_LSTM': model_bases_distance(ANN_stock()),
                     'sax' : compare_sax,
                     'model_based_RFR': model_bases_distance(RandomForestRegressor(n_estimators = 25, random_state=0)),
                     'euclidean' : apply_euclidean,
@@ -1247,6 +1267,20 @@ def run_sim_analysis(all_sim_path, all_stocks_names, similarity_param, stock_X_p
 
 
 def main():
+    experiment_predict_params = \
+        {
+            'next_t': [1, 3, 7],
+            'to_pivot': True,
+            'models': [GradientBoostingRegressor, RandomForestClassifier, RandomForestRegressor,
+                       GradientBoostingClassifier],
+            'models_arg': {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state': 0},
+                           RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state': 0},
+                           GradientBoostingClassifier.__name__: {'learning_rate': 0.02, 'random_state': 0},
+                           GradientBoostingRegressor.__name__: {'learning_rate': 0.02, 'random_state': 0}},
+            'force': False
+        }
+
+
     experiment_params_base = {
         'data_period': ['5yr'
                         ],
@@ -1259,6 +1293,8 @@ def main():
         'slide': [1]
     }
 
+
+
     experiment_params_1 = {
         'features_selection': [
             ('univariate', [u'Close_norm']),
@@ -1267,15 +1303,18 @@ def main():
               u'rsi', u'MACD', u'Open_Close_diff', u'High_Low_diff', u'Volume_norm']
              ),
         ],
-        'transformation': ['None', 'SAX', 'PCA'], #TODO SAX for uni PCA for multi
+        'transformation': ['PCA','SAX', 'None'], #TODO SAX for uni PCA for multi
         'k': [10],
         'similarity_col': ['Close_norm'],
         'similarity_func': ['euclidean'],
         'fix_len_func': ['time_corr'],
         'window_len': [0,5,10],
         'weighted_sampleing': [True, False],
-        'y_col': ['Close_norm','close proc'],
+        'y_col': ['Close_proc','Close_norm'],
     }
+    experiment_params_1.update(experiment_params_base)
+
+    iterate_exp(experiment_params_1, experiment_predict_params)
 
     experiment_params_2 ={
 
@@ -1357,24 +1396,12 @@ def main():
         'weighted_sampleing': [True, False]
     }
 
-    experiment_static_params = \
-        {
-            'next_t': [1, 3, 7],
-            'to_pivot': True,
-            'models': [GradientBoostingRegressor, RandomForestClassifier, RandomForestRegressor,
-                       GradientBoostingClassifier],
-            'models_arg': {RandomForestClassifier.__name__: {'n_estimators': 100, 'random_state': 0},
-                           RandomForestRegressor.__name__: {'n_estimators': 100, 'random_state': 0},
-                           GradientBoostingClassifier.__name__: {'learning_rate': 0.02, 'random_state': 0},
-                           GradientBoostingRegressor.__name__: {'learning_rate': 0.02, 'random_state': 0}},
-            'force': False
-        }
 
+
+def iterate_exp(experiment_params,experiment_static_params):
     experiments = get_index_product(experiment_params)
-
     for experiment in experiments:
-
-        #not experiment
+        # not experiment
         if (experiment['k'] == 0 and experiment['weighted_sampleing'] is True) \
                 or (experiment['window_len'] == 0 and experiment['weighted_sampleing'] is True) \
                 or (experiment['transformation'] == 'SAX' and experiment['features_selection'][0] == 'multivariate') \
@@ -1391,22 +1418,5 @@ def main():
         # pd.DataFrame().to_csv(os.path.join(results_path, 'similarity_evaluations.csv'), mode='a')
 
 
-        # experiment_static_params = \
-        #     {
-        #         'next_t': [1, 3, 7],
-        #         'to_pivot': False
-        #        # 'models': [LSTM_stock],
-        #         #'models_arg': {LSTM_stock.__name__: {},
-        #                        #}
-        #     }
-        #
-        # experiments = get_index_product(experiment_params)
-        # for experiment in experiments:
-        #     print "run experiment: " + str(experiment)
-        #     experiment.update(experiment_static_params)
-        #
-        # run_experiment(**experiment)
-
-
-calc_similarites('5yr')
-# main()
+#calc_similarites('5yr')
+main()
