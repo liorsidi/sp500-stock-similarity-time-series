@@ -12,25 +12,19 @@ from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
-from sklearn.metrics import auc
 from sklearn.metrics import f1_score
-from sklearn.metrics import log_loss
 from sklearn.metrics import mean_squared_error
 
 import itertools
 
 from sklearn.metrics import precision_score
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import StandardScaler
-from sklearn.utils import resample
 
-from Financial_FE import Financial_FE, rsiFunc, computeMACD
+from utils.financial_features import rsiFunc, computeMACD
 
 home_path = 'C:\\Users\\Lior\\StockSimilarity'
 
@@ -39,7 +33,7 @@ ENTITY = 'Name'
 TARGET = 'Close'
 FEATURES = ['Close']
 
-from SAX_FILE import SAX
+from utils.SAX_FILE import SAX
 sax_obj = SAX()
 
 def get_data(data_period):

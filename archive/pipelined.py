@@ -1,7 +1,5 @@
 import random
-import threading
 
-from datetime import datetime
 import pandas as pd
 import numpy as np
 import os
@@ -15,26 +13,18 @@ from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
-from sklearn.metrics import auc
 from sklearn.metrics import f1_score
-from sklearn.metrics import log_loss
 from sklearn.metrics import mean_squared_error
 
 import itertools
 
 from sklearn.metrics import precision_score
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import LabelBinarizer
-from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import StandardScaler
-from sklearn.utils import resample
 
-from ANN_stock import ANN_stock
-from Financial_FE import rsiFunc, computeMACD
+from utils.ANN_stock import ANN_stock
+from utils.financial_features import rsiFunc, computeMACD
 
 # home_path = 'C:\\Users\\Lior\\StockSimilarity'
 home_path = '/home/ise/Desktop/StockSimilarity'
@@ -45,7 +35,7 @@ TARGET = 'Close'
 FEATURES = ['Close']
 TARGET_PREP = 'traget_prep'
 
-from SAX_FILE import SAX
+from utils.SAX_FILE import SAX
 
 sax_obj = SAX()
 
@@ -98,7 +88,7 @@ def correlate_stock_len(stock1, stock2):
     return stock1_, stock2_
 
 
-from fastpip import fastpip
+from utils.fastpip import fastpip
 
 
 def pip_fix(stock1, stock2, factor=10, similarity_col=TARGET):
@@ -1306,7 +1296,7 @@ def main():
         'transformation': ['PCA','SAX', 'None'], #TODO SAX for uni PCA for multi
         'k': [10],
         'similarity_col': ['Close_norm'],
-        'similarity_func': ['euclidean'],
+        'similarity_func': ['cointegration','euclidean'],
         'fix_len_func': ['time_corr'],
         'window_len': [0,5,10],
         'weighted_sampleing': [True, False],
