@@ -6,7 +6,7 @@ from dtw import dtw
 import pickle
 
 from sklearn.metrics import mean_squared_error
-
+from data_preperation import prepare_train_test_points, prepare_stock_windows
 from Constants import *
 from data_preperation import *
 #import pandas as pd
@@ -18,6 +18,7 @@ import pandas as pd
 from utils.fastpip import fastpip
 
 from utils.SAX_FILE import SAX
+
 
 ## length fixing
 def fix_stock_len(stock1, stock2):
