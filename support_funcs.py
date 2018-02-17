@@ -10,9 +10,10 @@ from utils.SAX_FILE import SAX
 
 
 
-transformations = {'None': None,
-                   'SAX': SAX(),
-                   'PCA': PCA()}
+transformations = {'SAX': SAX(),
+                  'None': None,
+                    'PCA': PCA(n_components = 3,random_state = 0)
+                   }
 
 normalizations = {'Standard': StandardScaler()}
 
@@ -65,20 +66,22 @@ experiment_params_base = {
 
 experiment_params_1 = {
     'features_selection': [
-        ('univariate', [u'Close_norm']),
+
         ('multivariate',
          [u'Close_proc', u'Close_norm',
           u'rsi', u'MACD', u'Open_Close_diff', u'High_Low_diff', u'Volume_norm']
          ),
+('univariate', [u'Close_norm']),
     ],
-    'transformation': ['PCA','SAX', 'None'],
-    'k': [10],
+    'transformation': ['SAX', 'PCA','None'],
+    'k': [0,10],
     'similarity_col': ['Close_norm'],
     'similarity_func': ['euclidean'],
     'fix_len_func': ['time_corr'],
     'window_len': [0,5,10],
     'weighted_sampleing': [True, False],
     'y_col': ['Close_proc','Close_norm'],
+    'force' : [True]
 }
 
 experiment_params_2 ={

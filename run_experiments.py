@@ -213,6 +213,7 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
     future_ys = folds_Y_train[0].columns.tolist()
     evaluations = []
     evaluations_values = []
+
     if window_len > 0:
         features = [(features_name, wl) for wl in range(window_len) for features_name in features_names]
     else:
@@ -220,6 +221,7 @@ def evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds
     # iterate folds
     for f in range(len(folds_X_train)):
         print 'fold' + str(f)
+        print folds_X_train[f].columns
         X_train = folds_X_train[f][features]
         X_test = folds_X_test[f][features]
 
@@ -430,6 +432,12 @@ def run_experiment(data_period, stock_to_compare, n_folds, features_selection, f
         folds_loaded[0], folds_loaded[1], folds_loaded[2], folds_loaded[3], folds_loaded[4], folds_loaded[5], \
         folds_loaded[6]
 
+    if transformation == 'SAX':
+        features_names = [feature_name + "_transform" for feature_name in features_names ]
+
+    if transformation == 'PCA':
+        features_names = ['pc_' + str(i) for i in range(transformations[transformation].n_components)]
+
     evaluations = [
         evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test,
                        folds_curr_target_prep_train, folds_curr_target_prep_test,
@@ -546,7 +554,7 @@ def iterate_exp(experiment_params,experiment_static_params):
         # pd.DataFrame().to_csv(os.path.join(results_path, 'models_evaluations.csv'), mode='a')
         # pd.DataFrame().to_csv(os.path.join(results_path, 'similarity_evaluations.csv'), mode='a')
 
-calc_similarites('5yr')
+#calc_similarites('5yr')
 experiment_params_1.update(experiment_params_base)
 iterate_exp(experiment_params_1, experiment_predict_params)
 

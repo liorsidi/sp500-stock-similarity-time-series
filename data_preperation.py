@@ -1,3 +1,5 @@
+from copy import copy
+
 import pandas as pd
 import os
 import pickle
@@ -17,10 +19,15 @@ from Constants import *
 
 # data modeling
 
-def combine_df(data, name, cols_names, idx_name, idx_col):
-    cols_names_new = [s + name for s in cols_names]
-    data_df = pd.DataFrame(data, columns=cols_names_new)
-    data_df[idx_name] = idx_col
+def combine_df(data, name, cols_names, idx_name, idx_col, transformation):
+    if transformation.__class__.__name__== 'PCA':
+        cols_names_new = [ 'pc_' + str(i) for i in range(data.shape[1])]
+        data_df = pd.DataFrame(data, columns=cols_names_new)
+        data_df[idx_name] = idx_col
+    else:
+        cols_names_new = [s + name for s in cols_names]
+        data_df = pd.DataFrame(data, columns=cols_names_new)
+        data_df[idx_name] = idx_col
     data_df = data_df.set_index(TIME)
     return data_df
 
@@ -51,9 +58,10 @@ def preprocess_stock_features(stocks_df, stock_name, features_selection, finance
         stock_X_prep.append(stock_X_finance)
 
     if to_fit:
+        normalization = copy(normalization)
         normalization.fit(stock_X)
     stock_X_norm = normalization.transform(stock_X)
-    stock_X_norm_df = combine_df(stock_X_norm, "_norm", stock_X.columns, TIME, stock_X.index)
+    stock_X_norm_df = combine_df(stock_X_norm, "_norm", stock_X.columns, TIME, stock_X.index,normalization)
 
     stock_X_prep.append(stock_X_norm_df)
 
@@ -64,9 +72,10 @@ def preprocess_stock_features(stocks_df, stock_name, features_selection, finance
 
     if transformation is not None:
         if to_fit:
+            transformation = copy(transformation)
             transformation.fit(stock_X_prep_df)
         stock_X_transform = transformation.transform(stock_X_prep_df)
-        stock_X_norm_df = combine_df(stock_X_transform, "_transform", stock_X_prep_df.columns, TIME, stock_X.index)
+        stock_X_norm_df = combine_df(stock_X_transform, "_transform", stock_X_prep_df.columns, TIME, stock_X.index, transformation)
         stock_X_prep_df = pd.merge(stock_X_prep_df, stock_X_norm_df, left_index=True, right_index=True)
 
     # stock_X_raw_keep = stock_X_raw[[ENTITY, TARGET]]
