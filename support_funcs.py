@@ -66,19 +66,17 @@ experiment_params_base = {
 
 experiment_params_1 = {
     'features_selection': [
-
         ('multivariate',
-         [u'Close_proc', u'Close_norm',
-          u'rsi', u'MACD', u'Open_Close_diff', u'High_Low_diff', u'Volume_norm']
+            [u'Close_proc', u'Close_norm', u'rsi', u'MACD', u'Open_Close_diff', u'High_Low_diff', u'Volume_norm']
          ),
-('univariate', [u'Close_norm']),
+        ('univariate', [u'Close_norm'])
     ],
     'transformation': ['SAX', 'PCA','None'],
-    'k': [0,10],
+    'k': [10,0],
     'similarity_col': ['Close_norm'],
     'similarity_func': ['euclidean'],
     'fix_len_func': ['time_corr'],
-    'window_len': [0,5,10],
+    'window_len': [0, 5,10],
     'weighted_sampleing': [True, False],
     'y_col': ['Close_proc','Close_norm'],
     'force' : [True]

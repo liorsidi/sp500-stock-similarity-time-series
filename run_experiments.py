@@ -104,6 +104,12 @@ def prepare_rolling_periods_for_top_stocks(data_period, stock_to_compare,
         train_X, test_X, transformation, y_col)
 
     features_names = features_selection[1]  # TODO turn to multivariate
+    if transformation.__class__.__name__ == 'SAX':
+        features_names = [feature_name + "_transform" for feature_name in features_names ]
+
+    if transformation.__class__.__name__ == 'PCA':
+        features_names = ['pc_' + str(i) for i in range(transformation.n_components)]
+
     if window_len > 0:
         train_x_time_model, train_y_time_model, test_x_time_model, test_y_model, test_price, train_curr_target_prep, \
         test_curr_target_prep = prepare_train_test_windows(
@@ -360,8 +366,8 @@ def save_evaluations(evaluations, results_path, folds_topk, processing_params, w
         model_evals.append(model_eval_df)
         model_values_evals.append(model_values_eval)
 
-    # pd.concat(model_evals).to_csv(os.path.join(results_path, 'models_evaluations.csv'), mode='a')
-    pd.concat(model_values_evals).to_csv(os.path.join(results_path, 'models_values_evaluations.csv'), mode='a')
+    pd.concat(model_evals).to_csv(os.path.join(results_path, 'models_evaluations.csv'), mode='a')
+    #pd.concat(model_values_evals).to_csv(os.path.join(results_path, 'models_values_evaluations.csv'), mode='a')
 
     similar_stock_eval_folds = []
     for f in range(processing_params['n_folds'] - 1):
@@ -374,7 +380,7 @@ def save_evaluations(evaluations, results_path, folds_topk, processing_params, w
             similar_stock_eval_folds.append(stock_f)
 
     sim_eval_path = os.path.join(results_path, 'similarity_evaluations.csv')
-    pd.DataFrame(similar_stock_eval_folds).to_csv(sim_eval_path, mode='a')
+    #pd.DataFrame(similar_stock_eval_folds).to_csv(sim_eval_path, mode='a')
 
 
 def run_experiment(data_period, stock_to_compare, n_folds, features_selection, finance_features, normalization,
@@ -432,16 +438,16 @@ def run_experiment(data_period, stock_to_compare, n_folds, features_selection, f
         folds_loaded[0], folds_loaded[1], folds_loaded[2], folds_loaded[3], folds_loaded[4], folds_loaded[5], \
         folds_loaded[6]
 
-    if transformation == 'SAX':
-        features_names = [feature_name + "_transform" for feature_name in features_names ]
-
-    if transformation == 'PCA':
-        features_names = ['pc_' + str(i) for i in range(transformations[transformation].n_components)]
+    # if transformation == 'SAX':
+    #     features_names = [feature_name + "_transform" for feature_name in features_names ]
+    #
+    # if transformation == 'PCA':
+    #     features_names = ['pc_' + str(i) for i in range(transformations[transformation].n_components)]
 
     evaluations = [
         evaluate_model(window_len, folds_X_train, folds_Y_train, folds_X_test, folds_Y_test, folds_price_test,
                        folds_curr_target_prep_train, folds_curr_target_prep_test,
-                       features_names, model, models_arg[model.__name__],y_col)
+                       features_names, model, models_arg[model.__name__], y_col)
         for model in models]
 
     processing_params = {'data_period': data_period,
@@ -456,11 +462,13 @@ def run_experiment(data_period, stock_to_compare, n_folds, features_selection, f
                          'similarity_col': similarity_col,
                          'similarity_func': similarity_func}
 
-    windowing_params = {'window_len': window_len,
-                        'slide': slide,
-                        'weighted_sampleing': weighted_sampleing,
-                        'y_col': y_col}
-    # 'next_t' : next_t}
+    windowing_params = \
+        {
+            'window_len': window_len,
+            'slide': slide,
+            'weighted_sampleing': weighted_sampleing,
+             'y_col': y_col
+        }
 
     save_evaluations(evaluations, experiment_path, folds_topk, processing_params, windowing_params)
     return experiment_path
@@ -539,22 +547,23 @@ def iterate_exp(experiment_params,experiment_static_params):
     experiments = get_index_product(experiment_params)
     for experiment in experiments:
         # not experiment
+        print experiment
         if (experiment['k'] == 0 and experiment['weighted_sampleing'] is True) \
                 or (experiment['window_len'] == 0 and experiment['weighted_sampleing'] is True) \
-                or (experiment['transformation'] == 'SAX' and experiment['features_selection'][0] == 'multivariate') \
-                or (experiment['transformation'] == 'PCA' and experiment['features_selection'][0] == 'univariate') \
                 or (experiment['window_len'] > 0 and experiment['features_selection'][0] == 'multivariate'):
             continue
-
-        print "run experiment: " + str(experiment)
-        experiment.update(experiment_static_params)
-        results_path = run_experiment(**experiment)
+            #   or (experiment['transformation'] == 'PCA' and experiment['features_selection'][0] == 'univariate') \
+            #  or (experiment['transformation'] == 'SAX' and experiment['features_selection'][0] == 'multivariate') \
+        else:
+            print "run experiment: " + str(experiment)
+            experiment.update(experiment_static_params)
+            results_path = run_experiment(**experiment)
 
         pd.DataFrame().to_csv(os.path.join(results_path, 'models_values_evaluations.csv'), mode='a')
         # pd.DataFrame().to_csv(os.path.join(results_path, 'models_evaluations.csv'), mode='a')
         # pd.DataFrame().to_csv(os.path.join(results_path, 'similarity_evaluations.csv'), mode='a')
 
-#calc_similarites('5yr')
-experiment_params_1.update(experiment_params_base)
-iterate_exp(experiment_params_1, experiment_predict_params)
+calc_similarites('5yr')
+#experiment_params_1.update(experiment_params_base)
+#iterate_exp(experiment_params_1, experiment_predict_params)
 
