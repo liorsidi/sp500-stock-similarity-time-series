@@ -460,7 +460,8 @@ def run_experiment(data_period, stock_to_compare, n_folds, features_selection, f
                          'k': k,
                          'select_k_func': select_k_func,
                          'similarity_col': similarity_col,
-                         'similarity_func': similarity_func}
+                         'similarity_func': similarity_func,
+                         'fix_len_func' : fix_len_func}
 
     windowing_params = \
         {
@@ -545,6 +546,7 @@ def run_sim_analysis(all_sim_path, all_stocks_names, similarity_param, stock_X_p
 
 def iterate_exp(experiment_params,experiment_static_params):
     experiments = get_index_product(experiment_params)
+    count_exp = 0
     for experiment in experiments:
         # not experiment
         print experiment
@@ -556,6 +558,9 @@ def iterate_exp(experiment_params,experiment_static_params):
             #  or (experiment['transformation'] == 'SAX' and experiment['features_selection'][0] == 'multivariate') \
         else:
             print "run experiment: " + str(experiment)
+            print count_exp
+            print len(experiments) - count_exp
+            count_exp+=1
             experiment.update(experiment_static_params)
             results_path = run_experiment(**experiment)
 
@@ -563,7 +568,8 @@ def iterate_exp(experiment_params,experiment_static_params):
         # pd.DataFrame().to_csv(os.path.join(results_path, 'models_evaluations.csv'), mode='a')
         # pd.DataFrame().to_csv(os.path.join(results_path, 'similarity_evaluations.csv'), mode='a')
 
-calc_similarites('5yr')
-#experiment_params_1.update(experiment_params_base)
-#iterate_exp(experiment_params_1, experiment_predict_params)
+#calc_similarites('5yr')
+experiment_params = experiment_params_2
+experiment_params.update(experiment_params_base)
+iterate_exp(experiment_params, experiment_predict_params)
 

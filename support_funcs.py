@@ -22,9 +22,9 @@ select_k_funcs = {'get_random_k': get_random_k,
 
 
 similarity_funcs = {'cointegration': coinintegration,
-    'model_based_LSTM': model_bases_distance(ANN_stock()),
+                    # 'model_based_LSTM': model_bases_distance(ANN_stock()),
                     'sax' : compare_sax,
-                    'model_based_RFR': model_bases_distance(RandomForestRegressor(n_estimators = 25, random_state=0)),
+                    #'model_based_RFR': model_bases_distance(RandomForestRegressor(n_estimators = 25, random_state=0)),
                     'euclidean' : apply_euclidean,
                     'dtw' : apply_dtw,
                     'pearson' : apply_pearson
@@ -89,9 +89,12 @@ experiment_params_2 ={
     ],
     'finance_features': [True],
     'normalization': ['Standard'],
-    'transformation': ['None'],
+    'transformation': ['SAX'],
+'window_len': [0, 10],
     'k': [10,25,50],
+'weighted_sampleing': [True, False],
     'similarity_col': ['Close_norm','Close_proc'],
+    'y_col': ['Close_proc'],
     'similarity_func': similarity_funcs.keys(),
     'fix_len_func': fix_len_funcs.keys()
 }
