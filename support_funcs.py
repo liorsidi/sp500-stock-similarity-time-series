@@ -59,7 +59,7 @@ experiment_params_base = {
     'n_folds': [6],
     'finance_features': [True],
     'normalization': ['Standard'],
-    'select_k_func': ['get_top_k'],
+
     'slide': [1]
 }
 
@@ -79,6 +79,7 @@ experiment_params_1 = {
     'window_len': [0, 5,10],
     'weighted_sampleing': [True, False],
     'y_col': ['Close_proc','Close_norm'],
+'select_k_func': ['get_top_k'],
     'force' : [True]
 }
 
@@ -95,13 +96,44 @@ experiment_params_2 ={
 'weighted_sampleing': [True, False],
     'similarity_col': ['Close_norm','Close_proc'],
     'y_col': ['Close_proc'],
+'select_k_func': ['get_top_k'],
+    'similarity_func': similarity_funcs.keys(),
+    'fix_len_func': fix_len_funcs.keys()
+}
+
+experiment_params_2_1 ={
+
+    'features_selection': [
+        ('univariate', [u'Close_norm'])
+    ],
+    'finance_features': [True],
+    'normalization': ['Standard'],
+    'transformation': ['SAX'],
+    'window_len': [10],
+    'k': [10,25,50],
+    'weighted_sampleing': [ False],
+    'similarity_col': ['Close_proc'],
+    'y_col': ['Close_proc'],
+'select_k_func': ['get_top_k'],
     'similarity_func': similarity_funcs.keys(),
     'fix_len_func': fix_len_funcs.keys()
 }
 
 experiment_params_3 ={
-    'select_k_func': ['get_top_k','get_random_k'],
-    'k': [0],
+    'features_selection': [
+        ('univariate', [u'Close_norm'])
+    ],
+    'finance_features': [True],
+    'normalization': ['Standard'],
+    'transformation': ['SAX'],
+    'window_len': [10],
+    'k': [50],
+    'weighted_sampleing': [False],
+    'similarity_col': ['Close_proc'],
+    'y_col': ['Close_proc'],
+    'similarity_func': ['pearson'],
+    'fix_len_func': ['simple_fix'],
+    'select_k_func': ['get_random_k'],
 }
 
 experiment_params_MLP = {
