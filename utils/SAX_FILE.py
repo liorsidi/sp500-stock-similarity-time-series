@@ -57,6 +57,14 @@ class SAX(BaseEstimator, TransformerMixin):
         self.scalingFactor = np.sqrt((len(x) * 1.0) / (self.wordSize * 1.0))
         return (self.alphabetize(paaX), indices)
 
+    def to_letter_rep_no_norm(self, x):
+        """
+        Function takes a series of data, x, and transforms it to a string representation
+        """
+        (paaX, indices) = self.to_PAA(x)
+        self.scalingFactor = np.sqrt((len(x) * 1.0) / (self.wordSize * 1.0))
+        return (self.alphabetize(paaX), indices)
+
     def normalize(self, x):
         """
         Function will normalize an array (give it a mean of 0, and a
@@ -197,7 +205,8 @@ class SAX(BaseEstimator, TransformerMixin):
             X_ = X.copy()
             for column in X:
                 self.wordSize = len(X[column])
-                (xString, xIndices) = self.to_letter_rep(X[column])
+                #(xString, xIndices) = self.to_letter_rep(X[column])
+                (xString, xIndices) = self.to_letter_rep_no_norm(X[column])
                 ints =[ ord(symb) - self.aOffset for symb in list(xString)]
                 X_[column] =ints
             return X_.values

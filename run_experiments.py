@@ -367,7 +367,7 @@ def save_evaluations(evaluations, results_path, folds_topk, processing_params, w
         model_values_evals.append(model_values_eval)
 
     pd.concat(model_evals).to_csv(os.path.join(results_path, 'models_evaluations' + exp_type +'.csv'), mode='a')
-    #pd.concat(model_values_evals).to_csv(os.path.join(results_path, 'models_values_evaluations.csv'), mode='a')
+    pd.concat(model_values_evals).to_csv(os.path.join(results_path, 'models_values_evaluations' +  exp_type  + '.csv'), mode='a')
 
     similar_stock_eval_folds = []
     for f in range(processing_params['n_folds'] - 1):
@@ -564,13 +564,14 @@ def iterate_exp(experiment_params,experiment_static_params):
             experiment.update(experiment_static_params)
             results_path = run_experiment(**experiment)
 
-        pd.DataFrame().to_csv(os.path.join(results_path, 'models_values_evaluations' + exp_type +'.csv'), mode='a')
+        #pd.DataFrame().to_csv(os.path.join(results_path, 'models_values_evaluations' + exp_type +'.csv'), mode='a')
         # pd.DataFrame().to_csv(os.path.join(results_path, 'models_evaluations.csv'), mode='a')
         # pd.DataFrame().to_csv(os.path.join(results_path, 'similarity_evaluations.csv'), mode='a')
 
 #calc_similarites('5yr')
-exp_type = '3'
-experiment_params = experiment_params_3
+exp_type = 'exp1'
+experiment_params = experiment_params_1
 experiment_params.update(experiment_params_base)
+experiment_params['n_folds'] = [6]
 iterate_exp(experiment_params, experiment_predict_params)
 

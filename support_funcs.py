@@ -110,6 +110,24 @@ experiment_params_2_1 ={
     'normalization': ['Standard'],
     'transformation': ['SAX'],
     'window_len': [10],
+    'k': [50],
+    'weighted_sampleing': [ False],
+    'similarity_col': ['Close_proc'],
+    'y_col': ['Close_proc'],
+'select_k_func': ['get_top_k'],
+    'similarity_func': ['sax'],
+    'fix_len_func': fix_len_funcs.keys()
+}
+
+experiment_params_2_2 ={
+
+    'features_selection': [
+        ('univariate', [u'Close_norm'])
+    ],
+    'finance_features': [True],
+    'normalization': ['Standard'],
+    'transformation': ['SAX'],
+    'window_len': [10],
     'k': [10,25,50],
     'weighted_sampleing': [ False],
     'similarity_col': ['Close_proc'],
@@ -117,6 +135,24 @@ experiment_params_2_1 ={
 'select_k_func': ['get_top_k'],
     'similarity_func': similarity_funcs.keys(),
     'fix_len_func': fix_len_funcs.keys()
+}
+
+experiment_params_2_vals ={
+
+    'features_selection': [
+        ('univariate', [u'Close_norm'])
+    ],
+    'finance_features': [True],
+    'normalization': ['Standard'],
+    'transformation': ['SAX'],
+    'window_len': [10],
+    'k': [50],
+    'weighted_sampleing': [ False],
+    'similarity_col': ['Close_proc'],
+    'y_col': ['Close_proc'],
+'select_k_func': ['get_top_k'],
+    'similarity_func': ['cointegration'],
+    'fix_len_func': ['time_corr']
 }
 
 experiment_params_3 ={
@@ -127,7 +163,7 @@ experiment_params_3 ={
     'normalization': ['Standard'],
     'transformation': ['SAX'],
     'window_len': [10],
-    'k': [50],
+    'k': [100],
     'weighted_sampleing': [False],
     'similarity_col': ['Close_proc'],
     'y_col': ['Close_proc'],

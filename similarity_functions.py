@@ -15,6 +15,7 @@ import os
 
 import pandas as pd
 
+
 from utils.fastpip import fastpip
 
 from utils.SAX_FILE import SAX

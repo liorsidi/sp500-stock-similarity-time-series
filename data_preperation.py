@@ -46,6 +46,10 @@ def preprocess_stock_features(stocks_df, stock_name, features_selection, finance
     stock_X_finance = pd.DataFrame()
     stock_X_finance[TIME] = stock_X_raw[TIME]
     stock_X_finance = stock_X_finance.set_index(TIME)
+
+    if len(stock_X_finance) <= 25 :
+        print "insoficcient records for stock " + stock_name
+        return None, normalization, transformation, None
     # print stock_name
     if finance_features:
         stock_X_finance['Close_proc'] = stock_X_raw['Close'].pct_change()
@@ -116,7 +120,11 @@ def calculate_features_all_stocks(path, features_selection, finance_features, fo
         for stock in prev_stocks_names:
             train_stock_X, normalization, transformation, features_names = preprocess_stock_features(
                 train_X, stock, features_selection, finance_features, normalization, transformation, y_col)
-            train_X_processed.append(train_stock_X)
+
+            if features_names is not None:
+                train_X_processed.append(train_stock_X)
+            else:
+                continue
 
             if test_X is None:
                 test_X_processed = [pd.DataFrame()]
@@ -124,7 +132,10 @@ def calculate_features_all_stocks(path, features_selection, finance_features, fo
                 test_stock_X, _, _, features_names = preprocess_stock_features(test_X, stock, features_selection,
                                                                                finance_features, normalization,
                                                                                transformation, y_col, to_fit=False)
-                test_X_processed.append(test_stock_X)
+                if features_names is not None:
+                    test_X_processed.append(test_stock_X)
+                else:
+                    continue
 
         train_X_processed_df = pd.concat(train_X_processed)
         test_X_processed_df = pd.concat(test_X_processed)
