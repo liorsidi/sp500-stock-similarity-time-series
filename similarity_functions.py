@@ -20,11 +20,10 @@ from utils.fastpip import fastpip
 
 from utils.SAX_FILE import SAX
 
-
 ## length fixing
 def fix_stock_len(stock1, stock2):
     """
-    fix 2 stoack to be in same leangth, by multiplying the first value of the shorter stock
+    fix 2 stock to be in same length using padding.
     :param stock1:
     :param stock2:
     :return:
@@ -41,7 +40,7 @@ def fix_stock_len(stock1, stock2):
 
 def correlate_stock_len(stock1, stock2):
     """
-    fix 2 stoack to be in same leangth, by multiplying the first value of the shorter stock
+    fix 2 stock to be in same length keeping only the shared timepoints.
     :param stock1:
     :param stock2:
     :return:
@@ -82,7 +81,7 @@ def pip_fix(stock1, stock2, factor=10, similarity_col=TARGET):
 
 def correlate_stock_len_delay(stock1, stock2, delay=1):
     """
-    fix 2 stoack to be in same leangth, by multiplying the first value of the shorter stock
+    fix 2 stock to be in same leangth, by shifting stock time
     :param stock1:
     :param stock2:
     :return:
