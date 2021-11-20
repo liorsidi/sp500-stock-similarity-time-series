@@ -24,7 +24,7 @@ from utils.SAX_FILE import SAX
 ## length fixing
 def fix_stock_len(stock1, stock2):
     """
-    fix 2 stoack to be in same leangth, by multiplying the first value of the shorter stock
+    fix 2 stock to be in same length using padding.
     :param stock1:
     :param stock2:
     :return:
@@ -41,7 +41,7 @@ def fix_stock_len(stock1, stock2):
 
 def correlate_stock_len(stock1, stock2):
     """
-    fix 2 stoack to be in same leangth, by multiplying the first value of the shorter stock
+    fix 2 stock to be in same length keeping only the shared timepoints.
     :param stock1:
     :param stock2:
     :return:
@@ -82,7 +82,7 @@ def pip_fix(stock1, stock2, factor=10, similarity_col=TARGET):
 
 def correlate_stock_len_delay(stock1, stock2, delay=1):
     """
-    fix 2 stoack to be in same leangth, by multiplying the first value of the shorter stock
+    fix 2 stock to be in same leangth, by shifting stock time
     :param stock1:
     :param stock2:
     :return:
@@ -307,7 +307,7 @@ def calculate_similarity_all_stocks(df_stocks, stock_to_compare, stock_names, si
     :param experiment_path:
     :param force: force write new file
     :param split_time: if the similarity is on diffrent periods save the similarity with time in filename
-    :return: list of similarities between the target stoack and the other in the same order of the stock_names list
+    :return: list of similarities between the target stock and the other in the same order of the stock_names list
     """
     print "calc similarities for " + stock_to_compare + " func " + str(similarity_func) + \
           " fix len " + str(fix_len_func) + " on column " + similarity_col
